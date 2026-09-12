@@ -47,7 +47,7 @@ router.get('/providers', async (req: AuthedRequest, res: Response) => {
  * GET /api/ai/user-providers (auth) - list the current user's own AI configs.
  * Returns api_key masked (last 4 chars) so the UI can show it without leaking secrets.
  */
-router.get('/user-providers', async (req: AuthedRequest, res: Response) => {
+const listMyUserProviders = async (req: AuthedRequest, res: Response) => {
   const rows = await listUserAiConfigs(req.user!.id);
   return ok(
     res,
@@ -56,13 +56,13 @@ router.get('/user-providers', async (req: AuthedRequest, res: Response) => {
       apiKeyMasked: c.api_key ? `***${c.api_key.slice(-4)}` : '',
     })),
   );
-});
+};
 
 /**
  * POST /api/ai/user-providers (auth)
  * body: { provider, name, baseUrl, apiKey, model }
  */
-router.post('/user-providers', async (req: AuthedRequest, res: Response) => {
+const createMyUserProvider = async (req: AuthedRequest, res: Response) => {
   const { provider, name, baseUrl, apiKey, model } = req.body || {};
   if (!provider || !name || !baseUrl || !apiKey || !model) {
     return fail(res, 400, 'provider, name, baseUrl, apiKey, model required', 'BAD_REQUEST');
@@ -75,12 +75,12 @@ router.post('/user-providers', async (req: AuthedRequest, res: Response) => {
     model: String(model),
   });
   return ok(res, toPublic(row));
-});
+};
 
 /**
  * PUT /api/ai/user-providers/:id (auth)
  */
-router.put('/user-providers/:id', async (req: AuthedRequest, res: Response) => {
+const updateMyUserProvider = async (req: AuthedRequest, res: Response) => {
   const { provider, name, baseUrl, apiKey, model, isActive } = req.body || {};
   const row = await updateUserAiConfig(req.params.id, req.user!.id, {
     provider: provider !== undefined ? String(provider) : undefined,
@@ -92,15 +92,27 @@ router.put('/user-providers/:id', async (req: AuthedRequest, res: Response) => {
   });
   if (!row) return fail(res, 404, 'config not found', 'NOT_FOUND');
   return ok(res, toPublic(row));
-});
+};
 
 /**
  * DELETE /api/ai/user-providers/:id (auth)
  */
-router.delete('/user-providers/:id', async (req: AuthedRequest, res: Response) => {
+const deleteMyUserProvider = async (req: AuthedRequest, res: Response) => {
   await deleteUserAiConfig(req.params.id, req.user!.id);
   return ok(res, { ok: true });
-});
+};
+
+// Original /user-providers routes (kept for backward compatibility)
+router.get('/user-providers', listMyUserProviders);
+router.post('/user-providers', createMyUserProvider);
+router.put('/user-providers/:id', updateMyUserProvider);
+router.delete('/user-providers/:id', deleteMyUserProvider);
+
+// Alias routes used by the frontend: /api/ai/providers/me (GET/POST) and /:id (PUT/DELETE)
+router.get('/providers/me', listMyUserProviders);
+router.post('/providers/me', createMyUserProvider);
+router.put('/providers/me/:id', updateMyUserProvider);
+router.delete('/providers/me/:id', deleteMyUserProvider);
 
 /**
  * POST /api/ai/conversation (auth)

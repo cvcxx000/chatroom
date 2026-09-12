@@ -286,3 +286,84 @@ CREATE TABLE IF NOT EXISTS user_ai_configs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_user_ai_configs_user ON user_ai_configs(user_id);
+
+-- ============================================================
+-- user_settings 扩展字段（消息与通知 / 外观与显示 / 隐私与安全 / 其他）
+-- pglite 支持 ALTER TABLE ... ADD COLUMN IF NOT EXISTS
+-- ============================================================
+-- 消息与通知
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS vibrate BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS desktop_notifications BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_play_voice BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_download_image BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_download_file BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS group_mention_notify BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS friend_request_notify BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS system_announcement_notify BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS do_not_disturb BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS notification_sound VARCHAR(50) NOT NULL DEFAULT 'default';
+
+-- 外观与显示
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS theme_color VARCHAR(20) NOT NULL DEFAULT 'blue';
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS bubble_style VARCHAR(20) NOT NULL DEFAULT 'default';
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS show_message_time BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS show_online_status BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS show_typing_status BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS read_receipts BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS avatar_shape VARCHAR(20) NOT NULL DEFAULT 'circle';
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS compact_mode BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS animations_enabled BOOLEAN NOT NULL DEFAULT true;
+
+-- 隐私与安全
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS who_can_add_me VARCHAR(20) NOT NULL DEFAULT 'everyone';
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS who_can_see_online VARCHAR(20) NOT NULL DEFAULT 'friends';
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS who_can_see_profile VARCHAR(20) NOT NULL DEFAULT 'everyone';
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS allow_stranger_temp_chat BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS allow_group_invite BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS e2e_encryption BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS screenshot_notification BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS anti_harassment BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS keyword_filter TEXT;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS show_ip_location BOOLEAN NOT NULL DEFAULT false;
+
+-- 其他
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS quick_reply_enabled BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_archive_inactive BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS developer_mode BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS performance_monitor BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS network_proxy VARCHAR(255);
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS login_expiry_hours INT NOT NULL DEFAULT 72;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS auto_login BOOLEAN NOT NULL DEFAULT false;
+
+-- ============================================================
+-- user_reports (用户举报)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reporter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reported_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reason VARCHAR(50) NOT NULL,
+    detail TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (reason IN ('harassment','advertising','abuse','other')),
+    CHECK (status IN ('pending','reviewing','resolved','rejected')),
+    CHECK (reporter_id <> reported_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_reports_reporter ON user_reports(reporter_id);
+CREATE INDEX IF NOT EXISTS idx_user_reports_reported ON user_reports(reported_user_id);
+
+-- ============================================================
+-- login_history (登录历史 / 设备管理)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS login_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    device_type VARCHAR(50),
+    location VARCHAR(255),
+    login_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id, login_at DESC);

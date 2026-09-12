@@ -4,6 +4,7 @@ import { AuthedRequest } from '../middleware/auth';
 import {
   getUserSettings,
   updateUserSettings,
+  DEFAULT_SETTINGS,
 } from '../models/userSettingsModel';
 
 const router = Router();
@@ -17,16 +18,7 @@ router.get('/', async (req: AuthedRequest, res: Response) => {
 /** PUT /api/settings - partially update my settings. */
 router.put('/', async (req: AuthedRequest, res: Response) => {
   const body = (req.body || {}) as Record<string, unknown>;
-  const allowedKeys = [
-    'theme',
-    'font_size',
-    'enter_to_send',
-    'message_preview',
-    'auto_download',
-    'notifications_enabled',
-    'sound_enabled',
-    'language',
-  ] as const;
+  const allowedKeys = Object.keys(DEFAULT_SETTINGS) as (keyof typeof DEFAULT_SETTINGS)[];
   const data: Record<string, unknown> = {};
   for (const k of allowedKeys) {
     if (body[k] !== undefined) data[k] = body[k];

@@ -290,10 +290,17 @@ export interface AiProvider {
 }
 
 // ---------- User settings & profile ----------
-export type FontSize = 'small' | 'medium' | 'large';
+export type FontSize = 'small' | 'medium' | 'large' | 'xlarge';
 export type ThemePreference = 'light' | 'dark' | 'system';
+export type BubbleStyle = 'default' | 'rounded' | 'square';
+export type AvatarShape = 'circle' | 'square';
+export type WhoCanAddMe = 'everyone' | 'friends_of_friends' | 'nobody';
+export type WhoCanSee = 'everyone' | 'friends' | 'nobody';
+export type NotificationSound = 'default' | 'dingdong' | 'windchime' | 'bird' | 'silent';
+export type LanguagePref = 'zh' | 'en';
 
 export interface UserSettings {
+  // ---- existing ----
   theme?: ThemePreference;
   fontSize?: FontSize;
   notifications?: boolean;
@@ -302,6 +309,56 @@ export interface UserSettings {
   enterToSend?: boolean;
   messagePreview?: boolean;
   autoDownload?: boolean;
+
+  // ---- 账号安全 (snake_case per backend convention) ----
+  two_factor_enabled?: boolean;
+  auto_login?: boolean;
+  login_expiry_hours?: number;
+
+  // ---- 消息与通知 ----
+  vibrate?: boolean;
+  auto_play_voice?: boolean;
+  auto_download_image?: boolean;
+  auto_download_file?: boolean;
+  group_mention_notify?: boolean;
+  friend_request_notify?: boolean;
+  system_announcement_notify?: boolean;
+  do_not_disturb?: boolean;
+  dnd_start?: string;
+  dnd_end?: string;
+  notification_sound?: NotificationSound;
+  desktop_notifications?: boolean;
+
+  // ---- 外观与显示 ----
+  theme_color?: string;
+  bubble_style?: BubbleStyle;
+  show_message_time?: boolean;
+  show_online_status?: boolean;
+  show_typing_status?: boolean;
+  read_receipts?: boolean;
+  avatar_shape?: AvatarShape;
+  sidebar_width?: number;
+  compact_mode?: boolean;
+  animations_enabled?: boolean;
+  language?: LanguagePref;
+
+  // ---- 隐私与安全 ----
+  who_can_add_me?: WhoCanAddMe;
+  who_can_see_online?: WhoCanSee;
+  who_can_see_profile?: WhoCanSee;
+  allow_stranger_temp_chat?: boolean;
+  allow_group_invite?: boolean;
+  e2e_encryption?: boolean;
+  screenshot_notification?: boolean;
+  anti_harassment?: boolean;
+  keyword_filter?: string;
+  show_ip_location?: boolean;
+
+  // ---- 其他 ----
+  network_proxy?: string;
+  developer_mode?: boolean;
+  performance_monitor?: boolean;
+
   [key: string]: unknown;
 }
 
@@ -383,4 +440,30 @@ export interface UserAiConfig {
   isActive?: boolean;
   createdAt?: string;
   created_at?: string;
+}
+
+// ---------- Login history & block list ----------
+export interface LoginHistoryEntry {
+  id: string;
+  ipAddress?: string;
+  ip_address?: string;
+  userAgent?: string;
+  user_agent?: string;
+  deviceType?: string;
+  device_type?: string;
+  location?: string;
+  loginAt?: string;
+  login_at?: string;
+}
+
+export interface BlockedEntry {
+  id: string;
+  userId?: string;
+  user_id?: string;
+  blockedUserId?: string;
+  blocked_user_id?: string;
+  createdAt?: string;
+  created_at?: string;
+  user?: User;
+  blockedUser?: User;
 }

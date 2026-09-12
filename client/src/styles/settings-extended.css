@@ -1,0 +1,403 @@
+/* ============================================================
+   Settings extended (v2) — 70-item settings page
+   Loaded from Settings.tsx; does NOT modify global.css.
+   ============================================================ */
+
+/* ---- Mobile horizontal sub-nav (replaces hidden sidebar on <768px) ---- */
+.settings-mobile-nav {
+  display: none;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sidebar);
+  -webkit-overflow-scrolling: touch;
+}
+.settings-mobile-nav button {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.settings-mobile-nav button.active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+/* ---- Section titles inside content ---- */
+.settings-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 18px 0 8px;
+}
+.settings-card-title:first-child {
+  margin-top: 0;
+}
+
+/* ---- Color swatches (theme color picker) ---- */
+.color-swatches {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease;
+}
+.color-swatch:hover {
+  transform: scale(1.08);
+}
+.color-swatch.active {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--bg-panel), 0 0 0 4px currentColor;
+}
+
+/* ---- Segmented pill group (reuse seg-group style additions) ---- */
+.seg-group.wide button {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+/* ---- Range slider ---- */
+.range-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+}
+.range-wrap input[type='range'] {
+  flex: 1;
+  accent-color: var(--primary);
+}
+.range-val {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 52px;
+  text-align: right;
+}
+
+/* ---- Time inputs for DND ---- */
+.time-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.time-row input[type='time'] {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* ---- Fake QR code ---- */
+.fake-qr {
+  width: 148px;
+  height: 148px;
+  margin: 12px auto;
+  background:
+    repeating-linear-gradient(0deg, #000 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(90deg, #000 0 6px, #fff 6px 12px);
+  background-blend-mode: multiply;
+  border: 8px solid #fff;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+}
+
+/* ---- Danger button ---- */
+.btn-danger-solid {
+  background: #ef4444;
+  color: #fff;
+  border: none;
+}
+.btn-danger-solid:hover {
+  background: #dc2626;
+}
+
+/* ---- Inline hint / banner ---- */
+.settings-banner {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-active);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  margin: 8px 0;
+  color: var(--text);
+}
+.settings-banner.warn {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.settings-banner.ok {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+/* ---- Login history timeline ---- */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 8px;
+}
+.timeline-item {
+  display: flex;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.timeline-item:last-child {
+  border-bottom: none;
+}
+.timeline-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--primary);
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+.timeline-dot.current {
+  background: #10b981;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2);
+}
+.timeline-body {
+  flex: 1;
+  min-width: 0;
+}
+.timeline-title {
+  font-weight: 500;
+  font-size: 14px;
+}
+.timeline-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  word-break: break-all;
+}
+
+/* ---- Blocked list / quick replies / archived list rows ---- */
+.mini-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mini-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.mini-list-item .meta {
+  flex: 1;
+  min-width: 0;
+}
+.mini-list-item .name {
+  font-weight: 500;
+  font-size: 14px;
+}
+.mini-list-item .sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---- Quick reply editor ---- */
+.qr-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+/* ---- Storage meter ---- */
+.storage-meter {
+  margin: 8px 0;
+}
+.storage-bar {
+  height: 8px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+.storage-bar > div {
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+
+/* ---- FAQ ---- */
+.faq-item {
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.faq-item:last-child {
+  border-bottom: none;
+}
+.faq-q {
+  font-weight: 500;
+  font-size: 14px;
+}
+.faq-a {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ---- Performance monitor panel (floating) ---- */
+.perf-panel {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 9999;
+  background: rgba(20, 20, 30, 0.92);
+  color: #7cf0a0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  border-radius: 8px;
+  min-width: 160px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+/* ---- Animations off (global opt-out) ---- */
+body[data-animations-off='true'] *,
+body[data-animations-off='true'] *::before,
+body[data-animations-off='true'] *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* ---- Compact mode tweaks ---- */
+body[data-compact='true'] .setting-row {
+  padding: 8px 0;
+}
+body[data-compact='true'] .settings-card {
+  padding: 14px;
+}
+
+/* ---- Avatar shape preview ---- */
+.avatar-shape-preview {
+  display: flex;
+  gap: 10px;
+}
+.avatar-shape-preview .preview-avatar {
+  width: 40px;
+  height: 40px;
+  background: var(--bg-active);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+.avatar-shape-preview .preview-avatar.circle {
+  border-radius: 50%;
+}
+.avatar-shape-preview .preview-avatar.square {
+  border-radius: 8px;
+}
+.avatar-shape-preview .preview-avatar.active {
+  border-color: var(--primary);
+}
+
+/* ---- Bubble style preview ---- */
+.bubble-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+.bubble-preview .b {
+  padding: 6px 10px;
+  background: var(--bubble-theirs, var(--bg-active));
+  color: var(--bubble-theirs-text, var(--text));
+  font-size: 12px;
+  align-self: flex-start;
+}
+.bubble-preview .b.self {
+  align-self: flex-end;
+  background: var(--primary);
+  color: #fff;
+}
+.bubble-preview .b.default {
+  border-radius: 4px;
+}
+.bubble-preview .b.rounded {
+  border-radius: 14px;
+}
+.bubble-preview .b.square {
+  border-radius: 0;
+}
+
+/* ---- About / GitHub link ---- */
+.about-link {
+  color: var(--primary);
+  text-decoration: none;
+}
+.about-link:hover {
+  text-decoration: underline;
+}
+
+/* ---- Form textarea in modals ---- */
+textarea.full {
+  width: 100%;
+  min-height: 90px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+/* ============================================================
+   Mobile: show horizontal tab bar, keep content padded
+   ============================================================ */
+@media (max-width: 768px) {
+  .settings-mobile-nav {
+    display: flex;
+  }
+  .settings-page {
+    grid-template-rows: auto auto 1fr;
+  }
+  .settings-content {
+    padding: 14px;
+  }
+  .settings-card {
+    padding: 14px;
+  }
+  .color-swatch {
+    width: 24px;
+    height: 24px;
+  }
+  .range-wrap {
+    min-width: 0;
+    width: 100%;
+  }
+  .perf-panel {
+    font-size: 10px;
+    min-width: 140px;
+  }
+}

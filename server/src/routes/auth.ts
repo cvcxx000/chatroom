@@ -12,10 +12,25 @@ import {
   setVerified,
 } from '../models/userModel';
 import { setConfig, getConfig } from '../models/systemConfigModel';
+import { createLoginHistory, detectDeviceType } from '../models/loginHistoryModel';
 import { sendVerificationEmail } from '../services/email';
 import { AuthedRequest, requireAuth } from '../middleware/auth';
 
 const router = Router();
+
+/** Record a login attempt in login_history (best-effort). */
+async function recordLoginHistory(req: Request, userId: string): Promise<void> {
+  try {
+    const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null;
+    await createLoginHistory(userId, {
+      ipAddress: req.ip || null,
+      userAgent,
+      deviceType: detectDeviceType(userAgent),
+    });
+  } catch {
+    // Non-fatal: never block login on history write failure.
+  }
+}
 
 // Verification tokens: temp in-memory store -> userId
 const verificationTokens = new Map<string, string>();
@@ -63,6 +78,7 @@ router.post('/register', async (req: Request, res: Response) => {
   }
 
   await updateLastLogin(user.id);
+  await recordLoginHistory(req, user.id);
   const token = signToken({ userId: user.id, isAdmin: user.is_admin });
   return ok(res, {
     token,
@@ -87,6 +103,7 @@ router.post('/login', async (req: Request, res: Response) => {
   if (!match) return fail(res, 401, 'invalid credentials', 'INVALID_CREDENTIALS');
   if (user.is_banned) return fail(res, 403, 'User is banned', 'USER_BANNED');
   await updateLastLogin(user.id);
+  await recordLoginHistory(req, user.id);
   const token = signToken({ userId: user.id, isAdmin: user.is_admin });
   return ok(res, {
     token,
@@ -112,6 +129,7 @@ router.post('/admin-login', async (req: Request, res: Response) => {
   if (user.is_banned) return fail(res, 403, 'User is banned', 'USER_BANNED');
   if (!user.is_admin) return fail(res, 403, 'Admin access required', 'ADMIN_REQUIRED');
   await updateLastLogin(user.id);
+  await recordLoginHistory(req, user.id);
   const token = signToken({ userId: user.id, isAdmin: true });
   return ok(res, {
     token,

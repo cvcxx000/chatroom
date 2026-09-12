@@ -24,6 +24,14 @@ import {
   unblockUser,
   listBlockedUsers,
 } from '../models/blockedUserModel';
+import {
+  createReport,
+  REPORT_REASONS,
+  ReportReason,
+} from '../models/reportModel';
+import {
+  listLoginHistory,
+} from '../models/loginHistoryModel';
 import { UPLOAD_DIR } from './conversations';
 
 const router = Router();
@@ -61,6 +69,12 @@ router.get('/blocked', async (req: AuthedRequest, res: Response) => {
     if (u) users.push({ ...r, user: toSafeUser(u) });
   }
   return ok(res, users);
+});
+
+/** GET /api/users/login-history - recent login records (up to 20). */
+router.get('/login-history', async (req: AuthedRequest, res: Response) => {
+  const rows = await listLoginHistory(req.user!.id, 20);
+  return ok(res, rows);
 });
 
 /** GET /api/users/status - get my online status. */
@@ -167,6 +181,46 @@ router.post('/block/:userId', async (req: AuthedRequest, res: Response) => {
 router.delete('/block/:userId', async (req: AuthedRequest, res: Response) => {
   await unblockUser(req.user!.id, req.params.userId);
   return ok(res, { blocked: false, userId: req.params.userId });
+});
+
+/** POST /api/users/:userId/block - block a user (alias used by the frontend). */
+router.post('/:userId/block', async (req: AuthedRequest, res: Response) => {
+  const target = await findUserById(req.params.userId);
+  if (!target) return fail(res, 404, 'user not found', 'NOT_FOUND');
+  if (target.id === req.user!.id) {
+    return fail(res, 400, 'cannot block yourself', 'BAD_REQUEST');
+  }
+  await blockUser(req.user!.id, target.id);
+  return ok(res, { blocked: true, userId: target.id });
+});
+
+/** DELETE /api/users/:userId/block - unblock a user (alias used by the frontend). */
+router.delete('/:userId/block', async (req: AuthedRequest, res: Response) => {
+  await unblockUser(req.user!.id, req.params.userId);
+  return ok(res, { blocked: false, userId: req.params.userId });
+});
+
+/**
+ * POST /api/users/:userId/report - report a user.
+ * body: { reason: 'harassment'|'advertising'|'abuse'|'other', detail?: string }
+ */
+router.post('/:userId/report', async (req: AuthedRequest, res: Response) => {
+  const target = await findUserById(req.params.userId);
+  if (!target) return fail(res, 404, 'user not found', 'NOT_FOUND');
+  if (target.id === req.user!.id) {
+    return fail(res, 400, 'cannot report yourself', 'BAD_REQUEST');
+  }
+  const { reason, detail } = req.body || {};
+  if (!reason || !REPORT_REASONS.includes(reason)) {
+    return fail(res, 400, `reason must be one of: ${REPORT_REASONS.join(', ')}`, 'BAD_REQUEST');
+  }
+  const row = await createReport(
+    req.user!.id,
+    target.id,
+    reason as ReportReason,
+    detail != null ? String(detail) : null,
+  );
+  return ok(res, row);
 });
 
 export default router;

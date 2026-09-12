@@ -51,6 +51,7 @@ import type {
   User,
 } from '../types';
 import { formatBytes, formatDateSeparator, formatTime, isSameDay, prettyError } from '../utils/format';
+import '../styles/userops.css';
 
 type SidebarTab = 'chats' | 'friends' | 'temp';
 
@@ -175,6 +176,8 @@ export function MainChat() {
 
   // ---------- 用户资料卡 ----------
   const [profileUser, setProfileUser] = useState<User | null>(null);
+  // 已拉黑用户 id 集合（用于 UserProfileModal 展示拉黑/取消拉黑按钮）
+  const [blockedUserIds, setBlockedUserIds] = useState<Set<string>>(new Set());
 
   // ---------- 快捷回复 ----------
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
@@ -216,6 +219,16 @@ export function MainChat() {
       setRequests(r);
     } catch {
       /* ignore */
+    }
+  }, []);
+
+  // 拉取黑名单列表，维护 blockedUserIds
+  const loadBlocked = useCallback(async () => {
+    try {
+      const list = await usersApi.getBlockedList();
+      setBlockedUserIds(new Set((list || []).map((u) => u.id)));
+    } catch {
+      /* ignore（接口暂未上线时不影响其它功能） */
     }
   }, []);
 
@@ -281,8 +294,9 @@ export function MainChat() {
     if (!myId) return;
     loadConversations();
     loadFriends();
+    loadBlocked();
     loadQuickReplies();
-  }, [myId, loadConversations, loadFriends, loadQuickReplies]);
+  }, [myId, loadConversations, loadFriends, loadBlocked, loadQuickReplies]);
 
   // 会话列表加载完成后，拉取每个会话的置顶/免打扰/归档设置
   useEffect(() => {
@@ -401,10 +415,16 @@ export function MainChat() {
       setActiveTemp(null);
       setRightPanel(c.type === 'group' ? 'info' : null);
       setGeneratedLink(null);
-      setShowChat(true);
       setMessages([]);
       setLoadingMessages(true);
-      socket.joinConversation(c.id);
+      // 移动端：先切换到全屏聊天视图。无论后续 socket / 网络请求是否异常，
+      // 都要保证 UI 已经进入聊天界面，避免“点击会话没反应”。
+      setShowChat(true);
+      try {
+        socket.joinConversation(c.id);
+      } catch {
+        /* socket 未就绪时忽略，不阻塞界面切换 */
+      }
       try {
         const msgs = await conversationsApi.messages(c.id, { limit: 100 });
         // 服务端返回 newest-first（DESC），这里翻转为 oldest -> newest，
@@ -1206,6 +1226,19 @@ export function MainChat() {
       friends.some((f) => (f.friendId || f.friend_id) === uid || (f.userId || f.user_id) === uid),
     [friends],
   );
+
+  // 与当前资料用户共同所在的群聊数量（遍历群会话，检查该用户是否在群成员中）
+  const commonGroups = useMemo(() => {
+    if (!profileUser) return 0;
+    const uid = profileUser.id;
+    return conversations.filter((c) => {
+      if (c.type !== 'group') return false;
+      return (c.members || []).some((m) => {
+        const memberId = m.userId ?? m.user_id ?? m.user?.id;
+        return memberId === uid;
+      });
+    }).length;
+  }, [conversations, profileUser]);
 
   // 拖拽上传
   const onDragOver = (e: React.DragEvent) => {
@@ -2081,11 +2114,14 @@ export function MainChat() {
         open={!!profileUser}
         user={profileUser}
         isFriend={profileUser ? isFriendOf(profileUser.id) : false}
+        isBlocked={profileUser ? blockedUserIds.has(profileUser.id) : false}
         isSelf={profileUser ? profileUser.id === myId : false}
+        commonGroups={commonGroups}
         onClose={() => setProfileUser(null)}
         onSendMessage={(uid) => void openPrivateChat(uid)}
         onAtMention={() => showToast('已 @ 该用户')}
         onChange={() => void loadFriends()}
+        onBlockedChange={() => void loadBlocked()}
       />
     </div>
   );

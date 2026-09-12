@@ -26,6 +26,7 @@ import messageRoutes from './routes/messages';
 import conversationSettingsRoutes from './routes/conversationSettings';
 import userSettingsRoutes from './routes/userSettings';
 import quickReplyRoutes from './routes/quickReplies';
+import reportRoutes from './routes/reports';
 
 const app = express();
 const server = http.createServer(app);
@@ -69,6 +70,7 @@ app.use('/api/messages', requireAuth, messageRoutes);
 app.use('/api/conversation-settings', requireAuth, conversationSettingsRoutes);
 app.use('/api/settings', requireAuth, userSettingsRoutes);
 app.use('/api/quick-replies', requireAuth, quickReplyRoutes);
+app.use('/api/reports', requireAuth, reportRoutes);
 
 app.get('/health', (_req, res) => {
   res.json({ success: true, data: { status: 'ok', uptime: process.uptime() } });

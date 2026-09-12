@@ -1,0 +1,133 @@
+/* ============================================================
+ * 用户操作相关样式（举报 / 共同群聊 / 屏蔽消息 等）
+ * 独立文件，避免与 global.css 冲突
+ * ============================================================ */
+
+/* 资料行：共同群聊、加入时间等 */
+.profile-row .muted {
+  color: var(--text-muted, #8a90a0);
+}
+
+/* 屏蔽消息开关激活态 */
+.profile-actions .btn.muted-on {
+  border-color: var(--warn, #e6a23c);
+  color: var(--warn, #e6a23c);
+}
+
+/* ---------- 举报弹窗 ---------- */
+.report-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.report-reasons {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.report-reason-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 8px;
+  border: 1px solid var(--border, #e2e5ec);
+  border-radius: 10px;
+  background: var(--bg-panel, #fff);
+  color: var(--text, #1f2430);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.report-reason-chip:hover {
+  border-color: var(--primary, #4f6ef7);
+}
+
+.report-reason-chip.active {
+  border-color: var(--primary, #4f6ef7);
+  background: color-mix(in srgb, var(--primary, #4f6ef7) 12%, #fff);
+  color: var(--primary, #4f6ef7);
+  font-weight: 600;
+}
+
+.report-detail-label {
+  font-size: 13px;
+  color: var(--text-muted, #8a90a0);
+}
+
+.report-detail-textarea {
+  width: 100%;
+  min-height: 88px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e5ec);
+  border-radius: 10px;
+  background: var(--bg-panel, #fff);
+  color: var(--text, #1f2430);
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.report-detail-textarea:focus {
+  outline: none;
+  border-color: var(--primary, #4f6ef7);
+}
+
+.report-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.report-done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 0;
+  text-align: center;
+}
+
+.report-done-icon {
+  font-size: 40px;
+}
+
+.report-done p {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text, #1f2430);
+}
+
+/* 窄屏下举报原因两列仍可用，避免溢出 */
+@media (max-width: 480px) {
+  .report-reasons {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ============================================================
+ * 移动端聊天视图兜底（与 global.css @media max-width:768px
+ * 保持一致，确保点击会话后侧边栏隐藏、聊天区全屏显示）
+ * ============================================================ */
+@media (max-width: 768px) {
+  .chat-app.chat-view .sidebar {
+    display: none;
+  }
+  .chat-app:not(.chat-view) .chat-main {
+    display: none;
+  }
+  .chat-app.chat-view .chat-main {
+    display: flex;
+  }
+  /* 返回按钮在移动端始终可点击 */
+  .chat-app.chat-view .chat-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
