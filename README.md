@@ -397,10 +397,12 @@ chatroom/
 │   │   │   ├── share.ts          # 共享链接路由
 │   │   │   ├── qrcode.ts         # 扫码登录路由
 │   │   │   ├── ai.ts             # AI 对话路由
+│   │   │   ├── terminal.ts       # 虚拟终端路由
 │   │   │   └── setup.ts          # 初始化路由
-│   │   ├── services/         # 业务服务（邮件、AI 等）
+│   │   ├── services/         # 业务服务（邮件、AI、Docker 等）
 │   │   │   ├── email.ts          # 邮件服务
-│   │   │   └── ai.ts             # AI 对话服务（OpenAI 兼容）
+│   │   │   ├── ai.ts             # AI 对话服务（OpenAI 兼容）
+│   │   │   └── docker.ts         # Docker 容器管理（虚拟终端）
 │   │   ├── temp/             # 临时对话内存存储
 │   │   ├── utils/            # 工具函数
 │   │   ├── websocket/        # WebSocket 服务
@@ -455,6 +457,10 @@ chatroom/
 | AI 配置 | `POST /api/admin/ai-configs` | 新增 AI 配置 |
 | AI 配置 | `PUT /api/admin/ai-configs/:id` | 更新 AI 配置 |
 | AI 配置 | `DELETE /api/admin/ai-configs/:id` | 删除 AI 配置 |
+| 虚拟终端 | `POST /api/terminal/start` | 启动终端容器 |
+| 虚拟终端 | `POST /api/terminal/:id/stop` | 停止并删除容器 |
+| 虚拟终端 | `GET /api/terminal/:id/status` | 查询容器状态 |
+| 虚拟终端 | `WS /ws` (type:terminal) | WebSocket 终端输入输出流 |
 | 管理员 | `GET /api/admin/users` | 用户列表 |
 | 管理员 | `PUT /api/admin/users/:id/ban` | 封禁用户 |
 | 管理员 | `PUT /api/admin/users/:id/unban` | 解封用户 |
@@ -462,6 +468,8 @@ chatroom/
 | 管理员 | `GET /api/admin/smtp` | 获取 SMTP 配置 |
 | 管理员 | `PUT /api/admin/smtp` | 更新 SMTP 配置 |
 | 管理员 | `GET /api/admin/temp-conversations` | 活跃临时对话 |
+| 管理员 | `GET /api/admin/terminals` | 运行中终端容器列表 |
+| 管理员 | `POST /api/admin/terminals/:id/stop` | 强制停止终端容器 |
 | 初始化 | `POST /api/setup/init` | 系统初始化 |
 | 初始化 | `GET /api/setup/status` | 初始化状态 |
 
