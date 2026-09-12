@@ -1,27 +1,16 @@
-import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
+import { PGlite } from '@electric-sql/pglite';
 import { env } from './env';
+import type { QueryResult, QueryResultRow } from 'pg';
 
-let pool: Pool | null = null;
+let db: PGlite | null = null;
 
-export function getPool(): Pool {
-  if (!pool) {
-    pool = new Pool({
-      host: env.DB_HOST,
-      port: env.DB_PORT,
-      database: env.DB_NAME,
-      user: env.DB_USER,
-      password: env.DB_PASSWORD,
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-    });
-
-    pool.on('error', (err) => {
-      // eslint-disable-next-line no-console
-      console.error('[pg] unexpected idle client error', err);
-    });
+export function getPool(): PGlite {
+  if (!db) {
+    const dataDir = process.env.PGLITE_DATA || './.pgdata';
+    db = new PGlite(dataDir);
+    console.log(`[pglite] 数据库已初始化，数据目录: ${dataDir}`);
   }
-  return pool;
+  return db;
 }
 
 /** Test a one-off connection with the given credentials (used by setup wizard). */
@@ -32,20 +21,12 @@ export async function testConnection(opts: {
   username: string;
   password: string;
 }): Promise<boolean> {
-  const client = new Pool({
-    host: opts.host,
-    port: opts.port,
-    database: opts.database,
-    user: opts.username,
-    password: opts.password,
-    connectionTimeoutMillis: 8000,
-    max: 1,
-  });
   try {
-    await client.query('SELECT 1');
+    const pg = getPool();
+    await pg.query('SELECT 1');
     return true;
-  } finally {
-    await client.end().catch(() => undefined);
+  } catch {
+    return false;
   }
 }
 
@@ -55,24 +36,15 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   params?: unknown[],
   retries = 3,
 ): Promise<QueryResult<T>> {
-  const pool = getPool();
+  const pg = getPool();
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return await pool.query<T>(text, params as any[]);
+      const result = await pg.query<T>(text, params as any[]);
+      return result as unknown as QueryResult<T>;
     } catch (err: any) {
       lastErr = err;
-      // Retry on transient connection errors only
-      const code = err?.code || '';
-      const transient =
-        code === 'ECONNRESET' ||
-        code === 'ETIMEDOUT' ||
-        code === '57P01' || // admin_shutdown
-        code === '08006' || // connection failure
-        code === '08001' ||
-        code === 'EHOSTUNREACH' ||
-        code === 'ENOTFOUND';
-      if (!transient || attempt === retries) throw err;
+      if (attempt === retries) throw err;
       await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
     }
   }
@@ -80,13 +52,17 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
 }
 
 /** Acquire a client from the pool (for transactions). */
-export async function getClient(): Promise<PoolClient> {
-  return getPool().connect();
+export async function getClient(): Promise<any> {
+  const pg = getPool();
+  return {
+    query: (text: string, params?: unknown[]) => pg.query(text, params as any[]),
+    release: () => {},
+  };
 }
 
 export async function closePool(): Promise<void> {
-  if (pool) {
-    await pool.end();
-    pool = null;
+  if (db) {
+    await db.close();
+    db = null;
   }
 }

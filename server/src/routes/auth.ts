@@ -13,7 +13,7 @@ import {
 } from '../models/userModel';
 import { setConfig, getConfig } from '../models/systemConfigModel';
 import { sendVerificationEmail } from '../services/email';
-import { AuthedRequest } from '../middleware/auth';
+import { AuthedRequest, requireAuth } from '../middleware/auth';
 
 const router = Router();
 
@@ -127,7 +127,7 @@ router.post('/admin-login', async (req: Request, res: Response) => {
 });
 
 /** GET /api/auth/me */
-router.get('/me', async (req: AuthedRequest, res: Response) => {
+router.get('/me', requireAuth, async (req: AuthedRequest, res: Response) => {
   if (!req.user) return fail(res, 401, 'unauthorized', 'NO_TOKEN');
   const u = req.user;
   return ok(res, {

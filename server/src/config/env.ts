@@ -12,7 +12,7 @@ export const env = {
   DB_PASSWORD: process.env.DB_PASSWORD || '',
 
   JWT_SECRET: process.env.JWT_SECRET || 'dev-secret-change-me',
-  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '5h',
 
   UPLOAD_DIR: process.env.UPLOAD_DIR || 'uploads',
   MAX_FILE_SIZE_MB: parseInt(process.env.MAX_FILE_SIZE_MB || '50', 10),

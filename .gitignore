@@ -18,6 +18,8 @@ build/
 uploads/
 *.log
 logs/
+.pgdata/
+*/.pgdata/
 
 # IDE
 .vscode/

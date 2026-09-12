@@ -38,6 +38,12 @@ const UPLOAD_DIR = path.resolve(process.cwd(), env.UPLOAD_DIR);
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 app.use('/uploads', express.static(UPLOAD_DIR));
 
+// Serve frontend static files (production build)
+const CLIENT_DIST = path.resolve(__dirname, '../../client/dist');
+if (fs.existsSync(CLIENT_DIST)) {
+  app.use(express.static(CLIENT_DIST));
+}
+
 // Routes
 app.use('/api/setup', setupRoutes);
 app.use('/api/auth', authLimiter, authRoutes);
@@ -50,6 +56,17 @@ app.use('/api/admin', requireAuth, requireAdmin, adminRoutes);
 
 app.get('/health', (_req, res) => {
   res.json({ success: true, data: { status: 'ok', uptime: process.uptime() } });
+});
+
+// SPA fallback: serve index.html for non-API routes
+app.get('*', (_req, res, next) => {
+  if (_req.path.startsWith('/api/') || _req.path.startsWith('/uploads/')) return next();
+  const indexFile = path.join(CLIENT_DIST, 'index.html');
+  if (fs.existsSync(indexFile)) {
+    res.sendFile(indexFile);
+  } else {
+    next();
+  }
 });
 
 app.use(notFound);
