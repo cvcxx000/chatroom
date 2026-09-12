@@ -11,7 +11,9 @@ import { QrConfirm } from './pages/QrConfirm';
 import { Register } from './pages/Register';
 import { SetupWizard } from './pages/SetupWizard';
 import { ShareJoin } from './pages/ShareJoin';
+import { Settings } from './pages/Settings';
 import { Spinner } from './components/Spinner';
+import { ThemeProvider } from './context/ThemeContext';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -96,6 +98,16 @@ function AppRoutes() {
       <Route path="/register" element={<SetupGate><RequireGuest><Register /></RequireGuest></SetupGate>} />
       <Route path="/share/:token" element={<SetupGate><ShareJoin /></SetupGate>} />
       <Route path="/qr-confirm" element={<SetupGate><QrConfirm /></SetupGate>} />
+      <Route
+        path="/settings"
+        element={
+          <SetupGate>
+            <RequireAuth>
+              <Settings />
+            </RequireAuth>
+          </SetupGate>
+        }
+      />
       <Route path="/admin/login" element={<SetupGate><RequireGuest><AdminLogin /></RequireGuest></SetupGate>} />
       <Route
         path="/admin"
@@ -127,7 +139,9 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <SocketProvider>
-          <AppRoutes />
+          <ThemeProvider>
+            <AppRoutes />
+          </ThemeProvider>
         </SocketProvider>
       </AuthProvider>
     </BrowserRouter>

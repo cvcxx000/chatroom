@@ -4,6 +4,7 @@ import { aiApi } from '../api/ai';
 import { conversationsApi } from '../api/conversations';
 import { filesApi } from '../api/files';
 import { friendsApi } from '../api/friends';
+import { messagesApi } from '../api/messages';
 import { qrApi } from '../api/qr';
 import { shareApi } from '../api/share';
 import { tempApi } from '../api/temp';
@@ -17,20 +18,34 @@ import { ConversationList } from '../components/ConversationList';
 import { FriendListItem } from '../components/FriendList';
 import { FriendRequestItem } from '../components/FriendRequestItem';
 import { GroupFileList } from '../components/GroupFileList';
+import { MessageActions, type ActionMenuItem } from '../components/MessageActions';
 import { MessageBubble } from '../components/MessageBubble';
-import { MessageInput } from '../components/MessageInput';
+import { MessageInput, type ReplyContext } from '../components/MessageInput';
+import { MessageSearch } from '../components/MessageSearch';
 import { Modal } from '../components/Modal';
+import { ReactionPicker } from '../components/ReactionPicker';
+import { ScrollToBottomButton } from '../components/ScrollToBottomButton';
 import { Spinner } from '../components/Spinner';
 import { TypingIndicator } from '../components/TypingIndicator';
 import { TerminalPanel } from '../components/TerminalPanel';
 import { UserAvatar } from '../components/UserAvatar';
+import { GroupInfoPanel } from '../components/GroupInfoPanel';
+import { UserProfileModal } from '../components/UserProfileModal';
+import { ConversationMenu } from '../components/ConversationMenu';
+import { ConversationSearch } from '../components/ConversationSearch';
+import { conversationSettingsApi } from '../api/conversationSettings';
+import { quickRepliesApi } from '../api/quickReplies';
 import type {
   AiProvider,
   Conversation,
+  ConversationSettings,
   Friend,
   FriendRequest,
   GroupFile,
   Message,
+  MessageReplyRef,
+  MessageReaction,
+  QuickReply,
   SharedLink,
   TempMessage,
   User,
@@ -58,6 +73,11 @@ function normalizeMessage(raw: any): Message {
     fileSize: raw.fileSize ?? raw.file_size ?? null,
     createdAt: raw.createdAt ?? raw.created_at,
     isAi: raw.isAi ?? raw.is_ai,
+    // 新能力字段归一化
+    reactions: (raw.reactions ?? raw.reactions ?? null) as MessageReaction[] | null,
+    replyTo: (raw.replyTo ?? raw.reply_to ?? null) as MessageReplyRef | null,
+    isEdited: raw.isEdited ?? raw.is_edited ?? false,
+    isPinned: raw.isPinned ?? raw.is_pinned ?? false,
   };
 }
 
@@ -129,6 +149,40 @@ export function MainChat() {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
+  // ---------- 消息操作：回复 / 编辑 / 菜单 / 反应 / 搜索 / 转发 / 置顶 ----------
+  const [replyMsg, setReplyMsg] = useState<Message | null>(null);
+  const [editingMsg, setEditingMsg] = useState<Message | null>(null);
+  const [actionsMenu, setActionsMenu] = useState<{ x: number; y: number; message: Message } | null>(
+    null,
+  );
+  const [reactionFor, setReactionFor] = useState<Message | null>(null);
+  const [forwardingMsg, setForwardingMsg] = useState<Message | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [msgSearchResults, setMsgSearchResults] = useState<Message[]>([]);
+  const [searching, setSearching] = useState(false);
+  // 滚动到底部
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const nearBottomRef = useRef(true);
+  const searchDebounceRef = useRef<number | null>(null);
+
+  // ---------- 会话管理 / 搜索 / 右键菜单 ----------
+  const [convQuery, setConvQuery] = useState('');
+  const [convSettingsMap, setConvSettingsMap] = useState<Record<string, ConversationSettings>>({});
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; conv: Conversation } | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+
+  // ---------- 用户资料卡 ----------
+  const [profileUser, setProfileUser] = useState<User | null>(null);
+
+  // ---------- 快捷回复 ----------
+  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
+
+  // ---------- 拖拽上传 ----------
+  const [dragging, setDragging] = useState(false);
+  const dragDepthRef = useRef(0);
+
   const [searchParams] = useSearchParams();
 
   const msgEndRef = useRef<HTMLDivElement | null>(null);
@@ -171,6 +225,46 @@ export function MainChat() {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000);
   }, []);
 
+  // ---------- conversation settings (pin / mute / archive) ----------
+  const loadConversationSettings = useCallback(async (list: Conversation[]) => {
+    const entries = await Promise.all(
+      list.map(async (c) => {
+        try {
+          const s = await conversationSettingsApi.getSettings(c.id);
+          return [c.id, s] as const;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    const map: Record<string, ConversationSettings> = {};
+    for (const e of entries) if (e) map[e[0]] = e[1];
+    setConvSettingsMap(map);
+  }, []);
+
+  const loadQuickReplies = useCallback(async () => {
+    try {
+      setQuickReplies(await quickRepliesApi.list());
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // refresh a single conversation's settings locally
+  const applySetting = useCallback(
+    async (convId: string, patch: Partial<Pick<ConversationSettings, 'pinned' | 'muted' | 'archived'>>) => {
+      const prev = convSettingsMap[convId] || { conversationId: convId };
+      setConvSettingsMap((m) => ({ ...m, [convId]: { ...m[convId], ...patch } }));
+      try {
+        await conversationSettingsApi.updateSetting(convId, patch);
+      } catch (e) {
+        setConvSettingsMap((m) => ({ ...m, [convId]: prev }));
+        showToast(prettyError(e));
+      }
+    },
+    [convSettingsMap, showToast],
+  );
+
   // ---------- mobile breakpoint ----------
   useEffect(() => {
     const onResize = () => {
@@ -187,7 +281,13 @@ export function MainChat() {
     if (!myId) return;
     loadConversations();
     loadFriends();
-  }, [myId, loadConversations, loadFriends]);
+    loadQuickReplies();
+  }, [myId, loadConversations, loadFriends, loadQuickReplies]);
+
+  // 会话列表加载完成后，拉取每个会话的置顶/免打扰/归档设置
+  useEffect(() => {
+    if (conversations.length) void loadConversationSettings(conversations);
+  }, [conversations, loadConversationSettings]);
 
   // ---------- auto-open conversation from ?open= (e.g. after joining a share link) ----------
   useEffect(() => {
@@ -329,10 +429,24 @@ export function MainChat() {
     [socket],
   );
 
-  // ---------- auto scroll ----------
+  // ---------- auto scroll：仅当用户在底部时才跟随新消息 ----------
   useEffect(() => {
-    msgEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (nearBottomRef.current) {
+      msgEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    } else {
+      // 用户在历史位置：累计未读数
+      setUnreadCount((n) => n + 1);
+    }
   }, [messages, activeConv?.id, activeTemp?.tempId]);
+
+  // 切换会话时重置滚动位置与未读计数
+  useEffect(() => {
+    nearBottomRef.current = true;
+    setShowScrollBtn(false);
+    setUnreadCount(0);
+    setReplyMsg(null);
+    setEditingMsg(null);
+  }, [activeConv?.id, activeTemp?.tempId]);
 
   // ---------- append a message to the currently open conversation (optimistic) ----------
   const appendToActive = useCallback(
@@ -358,7 +472,9 @@ export function MainChat() {
           const sent = await conversationsApi.sendMessage(activeConv.id, {
             content: text,
             messageType: 'text',
-          });
+            // 携带回复引用（后端若不支持会忽略该字段）
+            ...(replyMsg ? ({ replyToId: replyMsg.id } as Record<string, string>) : {}),
+          } as Parameters<typeof conversationsApi.sendMessage>[1]);
           // 乐观更新：立即把自己发的消息渲染出来，不等 WS 回显
           appendToActive(activeConv.id, {
             ...sent,
@@ -368,6 +484,7 @@ export function MainChat() {
               displayName: user?.displayName ?? user?.display_name,
             },
           });
+          setReplyMsg(null);
         } catch (e) {
           alert(prettyError(e));
         }
@@ -383,7 +500,7 @@ export function MainChat() {
         }
       }
     },
-    [activeConv, activeTemp, socket, appendToActive, myId, user],
+    [activeConv, activeTemp, socket, appendToActive, myId, user, replyMsg],
   );
 
   const sendAttachment = useCallback(
@@ -421,6 +538,255 @@ export function MainChat() {
       }
     },
     [activeConv, appendToActive, myId, user],
+  );
+
+  // ---------- 消息操作：更新本地消息 ----------
+  const patchLocalMessage = useCallback((id: string, patch: Partial<Message>) => {
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+  }, []);
+
+  const removeLocalMessage = useCallback((id: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== id));
+  }, []);
+
+  // ---------- 消息操作菜单 ----------
+  const buildActionItems = useCallback(
+    (m: Message): ActionMenuItem[] => {
+      const mine = (m.senderId || m.sender_id) === myId;
+      const ageMs = Date.now() - new Date(m.createdAt).getTime();
+      const canEdit = mine && ageMs <= 5 * 60 * 1000; // 5 分钟内可编辑
+      const canDelete = mine && ageMs <= 2 * 60 * 1000; // 2 分钟内可撤回
+      const pinned = m.isPinned ?? false;
+      return [
+        { key: 'copy', label: '复制', icon: '📋' },
+        { key: 'reply', label: '回复', icon: '↩️' },
+        { key: 'forward', label: '转发', icon: '↪️' },
+        ...(canEdit ? [{ key: 'edit', label: '编辑', icon: '✏️' }] : []),
+        ...(canDelete ? [{ key: 'delete', label: '撤回', icon: '🗑️', danger: true }] : []),
+        { key: 'react', label: '添加反应', icon: '😀' },
+        { key: pinned ? 'unpin' : 'pin', label: pinned ? '取消置顶' : '置顶', icon: '📌' },
+      ];
+    },
+    [myId],
+  );
+
+  const openActionsMenu = useCallback(
+    (e: React.MouseEvent | React.TouchEvent, message: Message) => {
+      // 右键 / 长按定位
+      let x: number;
+      let y: number;
+      if ('clientX' in e) {
+        x = e.clientX;
+        y = e.clientY;
+      } else {
+        const t = e.touches[0];
+        x = t?.clientX ?? window.innerWidth / 2;
+        y = t?.clientY ?? window.innerHeight / 2;
+      }
+      setActionsMenu({ x, y, message });
+    },
+    [],
+  );
+
+  const copyMessage = useCallback(
+    async (m: Message) => {
+      try {
+        await navigator.clipboard.writeText(m.content || '');
+        showToast('已复制');
+      } catch {
+        window.prompt('复制内容', m.content || '');
+      }
+    },
+    [showToast],
+  );
+
+  const startReply = useCallback((m: Message) => {
+    setReplyMsg(m);
+    setEditingMsg(null);
+  }, []);
+
+  const startEdit = useCallback(
+    (m: Message) => {
+      setEditingMsg(m);
+      setReplyMsg(null);
+    },
+    [],
+  );
+
+  const finishEdit = useCallback(
+    async (content: string) => {
+      if (!editingMsg || !activeConv) return;
+      try {
+        const updated = await messagesApi.edit(editingMsg.id, content);
+        patchLocalMessage(editingMsg.id, normalizeMessage(updated));
+        showToast('消息已更新');
+      } catch (e) {
+        alert(prettyError(e));
+      } finally {
+        setEditingMsg(null);
+      }
+    },
+    [editingMsg, activeConv, patchLocalMessage, showToast],
+  );
+
+  const confirmDelete = useCallback(
+    async (m: Message) => {
+      if (!window.confirm('确定撤回这条消息吗？')) return;
+      try {
+        await messagesApi.remove(m.id, true);
+        removeLocalMessage(m.id);
+        showToast('已撤回');
+      } catch (e) {
+        alert(prettyError(e));
+      }
+    },
+    [removeLocalMessage, showToast],
+  );
+
+  const toggleReaction = useCallback(
+    async (m: Message, emoji: string) => {
+      try {
+        const updated = await messagesApi.addReaction(m.id, emoji);
+        patchLocalMessage(m.id, normalizeMessage(updated));
+      } catch (e) {
+        alert(prettyError(e));
+      }
+    },
+    [patchLocalMessage],
+  );
+
+  const togglePin = useCallback(
+    async (m: Message) => {
+      if (!activeConv) return;
+      try {
+        if (m.isPinned) {
+          await messagesApi.unpin(activeConv.id, m.id);
+          patchLocalMessage(m.id, { isPinned: false });
+          showToast('已取消置顶');
+        } else {
+          await messagesApi.pin(activeConv.id, m.id);
+          patchLocalMessage(m.id, { isPinned: true });
+          showToast('已置顶');
+        }
+      } catch (e) {
+        alert(prettyError(e));
+      }
+    },
+    [activeConv, patchLocalMessage, showToast],
+  );
+
+  const handleActionSelect = useCallback(
+    (key: string, m: Message) => {
+      switch (key) {
+        case 'copy':
+          void copyMessage(m);
+          break;
+        case 'reply':
+          startReply(m);
+          break;
+        case 'forward':
+          setForwardingMsg(m);
+          break;
+        case 'edit':
+          startEdit(m);
+          break;
+        case 'delete':
+          void confirmDelete(m);
+          break;
+        case 'react':
+          setReactionFor(m);
+          break;
+        case 'pin':
+        case 'unpin':
+          void togglePin(m);
+          break;
+      }
+    },
+    [copyMessage, startReply, startEdit, confirmDelete, togglePin],
+  );
+
+  // ---------- 消息搜索（防抖） ----------
+  const runSearch = useCallback(
+    async (q: string) => {
+      if (!activeConv) return;
+      const kw = q.trim();
+      if (!kw) {
+        setMsgSearchResults([]);
+        setSearching(false);
+        return;
+      }
+      setSearching(true);
+      try {
+        const list = await messagesApi.search(activeConv.id, kw);
+        setMsgSearchResults((list || []).map(normalizeMessage));
+      } catch {
+        setMsgSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    },
+    [activeConv],
+  );
+
+  const onSearchQueryChange = useCallback(
+    (q: string) => {
+      setSearchQuery(q);
+      if (searchDebounceRef.current) window.clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = window.setTimeout(() => void runSearch(q), 300);
+    },
+    [runSearch],
+  );
+
+  // 跳转到搜索命中的消息
+  const jumpToMessage = useCallback((m: Message) => {
+    setSearchOpen(false);
+    window.setTimeout(() => {
+      const el = document.querySelector(`[data-mid="${m.id}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('msg-jump-highlight');
+        window.setTimeout(() => el.classList.remove('msg-jump-highlight'), 2000);
+      }
+    }, 50);
+  }, []);
+
+  // ---------- 消息列表滚动：判断是否接近底部 ----------
+  const handleListScroll = useCallback(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const dist = list.scrollHeight - list.scrollTop - list.clientHeight;
+    const near = dist < 80;
+    nearBottomRef.current = near;
+    setShowScrollBtn(!near);
+    if (near) setUnreadCount(0);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const list = listRef.current;
+    if (list) {
+      list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+    } else {
+      msgEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+    nearBottomRef.current = true;
+    setShowScrollBtn(false);
+    setUnreadCount(0);
+  }, []);
+
+  // ---------- 转发 ----------
+  const doForward = useCallback(
+    async (targetConvId: string) => {
+      if (!forwardingMsg) return;
+      try {
+        await messagesApi.forward(forwardingMsg.id, targetConvId);
+        showToast('已转发');
+      } catch (e) {
+        alert(prettyError(e));
+      } finally {
+        setForwardingMsg(null);
+      }
+    },
+    [forwardingMsg, showToast],
   );
 
   // ---------- friends ----------
@@ -656,7 +1022,15 @@ export function MainChat() {
       const uid = mm.userId ?? mm.user_id;
       return uid && uid !== myId;
     });
-    return m?.user;
+    if (!m) return undefined;
+    return (
+      m.user || ({
+        id: m.userId ?? m.user_id,
+        username: m.username ?? '',
+        displayName: m.displayName ?? m.display_name ?? null,
+        avatarUrl: m.avatarUrl ?? m.avatar_url ?? null,
+      } as User)
+    );
   };
 
   const typingNames = useMemo(() => {
@@ -664,7 +1038,8 @@ export function MainChat() {
     const set = typingMap[activeConv.id] || new Set<string>();
     return Array.from(set).map((uid) => {
       const m = activeConv.members?.find((mm) => (mm.userId ?? mm.user_id) === uid);
-      return m?.user?.displayName || m?.user?.display_name || m?.user?.username || '对方';
+      const u = m?.user || (m ? { displayName: m.displayName, display_name: m.display_name, username: m.username } : null);
+      return u?.displayName || u?.display_name || u?.username || '对方';
     });
   }, [activeConv, typingMap]);
 
@@ -694,6 +1069,172 @@ export function MainChat() {
     return out;
   }, [messages]);
 
+  // 群成员（用于 @提及选择器）
+  const mentionMembers = useMemo(() => {
+    if (!activeConv || activeConv.type !== 'group') return [];
+    return (activeConv.members || []).map((mm) => {
+      const uid = mm.userId ?? mm.user_id ?? '';
+      const u = mm.user;
+      return {
+        id: uid,
+        name: u?.displayName || u?.display_name || u?.username || '',
+        username: u?.username || '',
+        avatar: u?.avatarUrl ?? u?.avatar_url ?? null,
+      };
+    });
+  }, [activeConv]);
+
+  // 回复上下文（传给 MessageInput 顶部预览条）
+  const replyContext: ReplyContext | null = replyMsg
+    ? {
+        senderName:
+          replyMsg.sender?.displayName ||
+          replyMsg.sender?.display_name ||
+          replyMsg.sender?.username,
+        preview: (replyMsg.content || '').slice(0, 80),
+      }
+    : null;
+
+  // 过滤 + 排序后的会话列表：置顶在前，按搜索过滤，归档默认隐藏
+  const visibleConversations = useMemo(() => {
+    const q = convQuery.trim().toLowerCase();
+    const filtered = conversations.filter((c) => {
+      const s = convSettingsMap[c.id];
+      if (s?.archived && !showArchived) return false;
+      if (!q) return true;
+      const name =
+        c.type === 'group'
+          ? c.name || ''
+          : otherUserOf(c)?.displayName || otherUserOf(c)?.display_name || otherUserOf(c)?.username || '';
+      const lastText = (c.lastMessage ?? c.last_message)?.content || '';
+      return name.toLowerCase().includes(q) || lastText.toLowerCase().includes(q);
+    });
+    filtered.sort((a, b) => {
+      const pa = convSettingsMap[a.id]?.pinned ? 1 : 0;
+      const pb = convSettingsMap[b.id]?.pinned ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      const ta = (a.lastMessage ?? a.last_message)?.createdAt || a.createdAt || a.created_at || '';
+      const tb = (b.lastMessage ?? b.last_message)?.createdAt || b.createdAt || b.created_at || '';
+      return String(tb).localeCompare(String(ta));
+    });
+    return filtered;
+  }, [conversations, convSettingsMap, convQuery, showArchived]);
+
+  // 会话右键菜单定位
+  const onConvContextMenu = useCallback(
+    (e: React.MouseEvent, conv: Conversation) => {
+      e.preventDefault();
+      setContextMenu({ x: e.clientX, y: e.clientY, conv });
+    },
+    [],
+  );
+
+  const handleConvAction = useCallback(
+    async (action: 'pin' | 'mute' | 'archive' | 'read' | 'unread' | 'clear' | 'delete') => {
+      const conv = contextMenu?.conv;
+      if (!conv) return;
+      const s = convSettingsMap[conv.id] || {};
+      switch (action) {
+        case 'pin':
+          await applySetting(conv.id, { pinned: !s.pinned });
+          break;
+        case 'mute':
+          await applySetting(conv.id, { muted: !s.muted });
+          break;
+        case 'archive':
+          await applySetting(conv.id, { archived: !s.archived });
+          break;
+        case 'read':
+          try {
+            await conversationsApi.markRead(conv.id);
+            setConversations((prev) => prev.map((c) => (c.id === conv.id ? { ...c, unreadCount: 0, unread_count: 0 } : c)));
+            showToast('已标记为已读');
+          } catch (e) {
+            showToast(prettyError(e));
+          }
+          break;
+        case 'unread':
+          try {
+            await conversationsApi.markUnread(conv.id);
+            showToast('已标记为未读');
+          } catch (e) {
+            showToast(prettyError(e));
+          }
+          break;
+        case 'clear':
+          if (window.confirm('确定清空与该会话的聊天记录？')) {
+            try {
+              await conversationsApi.clearHistory(conv.id);
+              if (activeConv?.id === conv.id) setMessages([]);
+              showToast('已清空聊天记录');
+            } catch (e) {
+              showToast(prettyError(e));
+            }
+          }
+          break;
+        case 'delete':
+          if (window.confirm('确定删除该会话？此操作不可恢复。')) {
+            try {
+              await conversationsApi.deleteConversation(conv.id);
+              setConversations((prev) => prev.filter((c) => c.id !== conv.id));
+              if (activeConv?.id === conv.id) {
+                setActiveConv(null);
+                setMessages([]);
+              }
+              showToast('会话已删除');
+            } catch (e) {
+              showToast(prettyError(e));
+            }
+          }
+          break;
+      }
+    },
+    [contextMenu, convSettingsMap, applySetting, activeConv, showToast],
+  );
+
+  // 打开用户资料卡
+  const openProfile = useCallback(
+    (u: User) => {
+      if (u.id === myId) return;
+      setProfileUser(u);
+    },
+    [myId],
+  );
+
+  const isFriendOf = useCallback(
+    (uid: string) =>
+      friends.some((f) => (f.friendId || f.friend_id) === uid || (f.userId || f.user_id) === uid),
+    [friends],
+  );
+
+  // 拖拽上传
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!activeConv) return;
+    if (e.dataTransfer.types.includes('Files')) {
+      dragDepthRef.current += 1;
+      setDragging(true);
+    }
+  };
+  const onDragLeave = () => {
+    dragDepthRef.current -= 1;
+    if (dragDepthRef.current <= 0) {
+      dragDepthRef.current = 0;
+      setDragging(false);
+    }
+  };
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setDragging(false);
+    const dropped = Array.from(e.dataTransfer.files || []);
+    if (!activeConv || dropped.length === 0) return;
+    for (const f of dropped) {
+      const isImage = f.type.startsWith('image/');
+      sendAttachment(f, isImage);
+    }
+  };
+
   if (!user) return null;
 
   return (
@@ -708,6 +1249,13 @@ export function MainChat() {
             <div className="sidebar-profile-name">{user.displayName || user.username}</div>
             <div className="muted">@{user.username}</div>
           </div>
+          <button
+            className="icon-btn"
+            title="设置"
+            onClick={() => navigate('/settings')}
+          >
+            ⚙️
+          </button>
           <button
             className="icon-btn"
             title="扫一扫"
@@ -747,6 +1295,15 @@ export function MainChat() {
 
         {sidebarTab === 'chats' && (
           <>
+            <ConversationSearch value={convQuery} onChange={setConvQuery} />
+            {Object.values(convSettingsMap).some((s) => s?.archived) && (
+              <button
+                className="btn btn-ghost btn-sm conv-archive-toggle"
+                onClick={() => setShowArchived((v) => !v)}
+              >
+                {showArchived ? '📥 隐藏归档' : '🗂️ 查看归档'}
+              </button>
+            )}
             <div className="sidebar-actions">
               <button className="btn btn-secondary btn-sm" onClick={() => setCreateGroupOpen(true)}>
                 + 新建群聊
@@ -764,10 +1321,12 @@ export function MainChat() {
               </button>
             </div>
             <ConversationList
-              conversations={conversations}
+              conversations={visibleConversations}
               loading={loadingConvs}
               activeId={activeConv?.id || null}
               onSelect={openConversation}
+              settingsMap={convSettingsMap}
+              onContextMenu={onConvContextMenu}
             />
           </>
         )}
@@ -836,11 +1395,11 @@ export function MainChat() {
               <div className="section-title">我的好友 ({friends.length})</div>
               {friends.length === 0 && <div className="empty-list">还没有好友</div>}
               {friends.map((f) => {
-                const u = f.user || f.friend;
+                const u = f.user || f.friend || (f as unknown as User);
                 if (!u) return null;
                 return (
                   <FriendListItem
-                    key={f.id || f.userId || f.friendId}
+                    key={f.id || f.userId || f.friendId || u.id}
                     name={u.displayName || u.display_name || u.username}
                     avatar={u.avatarUrl ?? u.avatar_url ?? null}
                     subtitle={`@${u.username}`}
@@ -901,7 +1460,17 @@ export function MainChat() {
       </aside>
 
       {/* MIDDLE COLUMN */}
-      <main className={`chat-main ${activeTemp ? 'temp-theme' : ''} ${viewMode === 'terminal' ? 'terminal-theme' : ''}`}>
+      <main
+        className={`chat-main ${activeTemp ? 'temp-theme' : ''} ${viewMode === 'terminal' ? 'terminal-theme' : ''}`}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
+        {dragging && !activeTemp && (
+          <div className="drop-overlay">
+            <div className="drop-overlay-inner">📤 松开以上传文件</div>
+          </div>
+        )}
         {viewMode === 'terminal' && terminalContainerId ? (
           <TerminalPanel
             containerId={terminalContainerId}
@@ -981,6 +1550,17 @@ export function MainChat() {
                     </div>
                   </div>
                   <div className="chat-header-actions">
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => {
+                        setSearchOpen(true);
+                        setSearchQuery('');
+                        setMsgSearchResults([]);
+                      }}
+                      title="搜索消息"
+                    >
+                      🔍
+                    </button>
                     {activeConv.type === 'group' && (
                       <button
                         className="btn btn-ghost btn-sm"
@@ -1000,63 +1580,91 @@ export function MainChat() {
               ) : null}
             </header>
 
-            <div className="message-list" ref={listRef}>
-              {loadingMessages ? (
-                <div className="empty-list">
-                  <Spinner />
-                </div>
-              ) : activeTemp ? (
-                <>
-                  {activeTemp.messages.map((m) => {
-                    const mine = (m.senderId || m.sender_id) === myId;
+            <div className="chat-scroll-wrap">
+              <div className="message-list" ref={listRef} onScroll={handleListScroll}>
+                {loadingMessages ? (
+                  <div className="empty-list">
+                    <Spinner />
+                  </div>
+                ) : activeTemp ? (
+                  <>
+                    {activeTemp.messages.map((m) => {
+                      const mine = (m.senderId || m.sender_id) === myId;
+                      return (
+                        <MessageBubble
+                          key={m.id}
+                          kind="temp"
+                          message={m}
+                          isMine={mine}
+                          createdAt={m.createdAt || m.created_at || ''}
+                          isTemp
+                          expiresAt={m.expiresAt || m.expires_at}
+                          senderName={m.sender?.displayName || m.sender?.display_name || m.sender?.username}
+                        />
+                      );
+                    })}
+                    {activeTemp.messages.length === 0 && (
+                      <div className="empty-list">还没有消息，发送一条吧（2 分钟后自动销毁）</div>
+                    )}
+                  </>
+                ) : (
+                  groupedMessages.map((g, i) => {
+                    if (g.type === 'day') {
+                      return (
+                        <div key={`d-${i}`} className="date-sep">
+                          {g.date}
+                        </div>
+                      );
+                    }
+                    const m = g.message as Message;
                     return (
-                      <MessageBubble
-                        key={m.id}
-                        kind="temp"
-                        message={m}
-                        isMine={mine}
-                        createdAt={m.createdAt || m.created_at || ''}
-                        isTemp
-                        expiresAt={m.expiresAt || m.expires_at}
-                        senderName={m.sender?.displayName || m.sender?.display_name || m.sender?.username}
-                      />
+                      <div key={m.id} className="msg-wrapper" data-mid={m.id}>
+                        <MessageBubble
+                          kind="message"
+                          message={m}
+                          isMine={(m.senderId || m.sender_id) === myId}
+                          createdAt={m.createdAt}
+                          showSender={activeConv?.type === 'group'}
+                          isAi={
+                            m.isAi ||
+                            m.sender?.username === 'ai_assistant' ||
+                            activeConv?.type === 'ai'
+                          }
+                          senderName={
+                            m.sender?.displayName || m.sender?.display_name || m.sender?.username
+                          }
+                          senderAvatar={m.sender?.avatarUrl ?? m.sender?.avatar_url ?? null}
+                          reactions={m.reactions ?? null}
+                          replyTo={m.replyTo ?? null}
+                          isEdited={m.isEdited ?? false}
+                          isPinned={m.isPinned ?? false}
+                          onActions={(e) => openActionsMenu(e, m)}
+                          onReactClick={(emoji) => void toggleReaction(m, emoji)}
+                          onAvatarClick={(u) => {
+                            if (u.id && u.id !== myId && u.username !== 'ai_assistant') openProfile(u);
+                          }}
+                        />
+                      </div>
                     );
-                  })}
-                  {activeTemp.messages.length === 0 && (
-                    <div className="empty-list">还没有消息，发送一条吧（2 分钟后自动销毁）</div>
-                  )}
-                </>
-              ) : (
-                groupedMessages.map((g, i) =>
-                  g.type === 'day' ? (
-                    <div key={`d-${i}`} className="date-sep">
-                      {g.date}
-                    </div>
-                  ) : (
-                    <MessageBubble
-                      key={(g.message as Message).id}
-                      kind="message"
-                      message={g.message!}
-                      isMine={(g.message!.senderId || g.message!.sender_id) === myId}
-                      createdAt={g.message!.createdAt}
-                      showSender={activeConv?.type === 'group'}
-                      isAi={
-                        g.message!.isAi ||
-                        g.message!.sender?.username === 'ai_assistant' ||
-                        activeConv?.type === 'ai'
-                      }
-                      senderName={
-                        g.message!.sender?.displayName ||
-                        g.message!.sender?.display_name ||
-                        g.message!.sender?.username
-                      }
-                      senderAvatar={g.message!.sender?.avatarUrl ?? g.message!.sender?.avatar_url ?? null}
-                    />
-                  ),
-                )
-              )}
-              <TypingIndicator names={typingNames} />
-              <div ref={msgEndRef} />
+                  })
+                )}
+                <TypingIndicator names={typingNames} />
+                <div ref={msgEndRef} />
+              </div>
+              <ScrollToBottomButton
+                visible={showScrollBtn}
+                unreadCount={unreadCount}
+                onClick={scrollToBottom}
+              />
+              <MessageSearch
+                open={searchOpen}
+                query={searchQuery}
+                onQueryChange={onSearchQueryChange}
+                results={msgSearchResults}
+                searching={searching}
+                onJump={jumpToMessage}
+                onClose={() => setSearchOpen(false)}
+              />
             </div>
 
             <div className="chat-footer">
@@ -1073,6 +1681,18 @@ export function MainChat() {
                   onSendFile={(f) => sendAttachment(f, false)}
                   placeholder="输入消息，Enter 发送，Shift+Enter 换行…"
                   onTyping={(t) => activeConv && socket.sendTyping(activeConv.id, t)}
+                  replyTo={replyContext}
+                  onCancelReply={() => {
+                    setReplyMsg(null);
+                    setEditingMsg(null);
+                  }}
+                  editContent={editingMsg ? editingMsg.content : null}
+                  onFinishEdit={(c) => void finishEdit(c)}
+                  members={mentionMembers}
+                  enableMention={activeConv?.type === 'group'}
+                  enterToSend
+                  quickReplies={quickReplies}
+                  onVoicePlaceholder={() => showToast('语音功能开发中（按住说话）')}
                 />
               )}
             </div>
@@ -1090,31 +1710,60 @@ export function MainChat() {
             </button>
           </div>
           {rightPanel === 'info' && (
-            <div className="right-panel-body">
-              <div className="share-block">
-                <button className="btn btn-primary btn-block" onClick={openShareModal}>
-                  🔗 生成共享链接
-                </button>
-              </div>
-              <div className="members-block">
-                <div className="section-title">
-                  成员 ({activeConv.members?.length ?? 0})
+            activeConv.type === 'group' ? (
+              <>
+                <div className="share-block">
+                  <button className="btn btn-primary btn-block" onClick={openShareModal}>
+                    🔗 生成共享链接
+                  </button>
                 </div>
-                {(activeConv.members || []).map((m) => {
-                  const u = m.user;
-                  if (!u) return null;
-                  return (
-                    <div key={m.userId ?? m.user_id} className="member-row">
-                      <UserAvatar name={u.username} size={32} src={u.avatarUrl ?? u.avatar_url ?? null} />
-                      <div>
-                        <div>{u.displayName || u.display_name || u.username}</div>
-                        <div className="muted">@{u.username}{m.role === 'admin' ? ' · 管理员' : ''}</div>
+                <GroupInfoPanel
+                  conversation={activeConv}
+                  friends={friends}
+                  messages={messages}
+                  files={files}
+                  myId={myId}
+                  onChanged={() => void openConversation(activeConv)}
+                  onLeave={() => {
+                    setRightPanel(null);
+                    setActiveConv(null);
+                    setMessages([]);
+                    void loadConversations();
+                    showToast('已退出群聊');
+                  }}
+                  onOpenUserProfile={openProfile}
+                  onDownloadFile={(name, url) => {
+                    if (url) window.open(url, '_blank');
+                  }}
+                  onPreviewImage={(src) => {
+                    window.open(src, '_blank');
+                  }}
+                />
+              </>
+            ) : (
+              <div className="right-panel-body">
+                <div className="share-block">
+                  <button className="btn btn-primary btn-block" onClick={openShareModal}>
+                    🔗 生成共享链接
+                  </button>
+                </div>
+                <div className="members-block">
+                  <div className="section-title">对方</div>
+                  {(() => {
+                    const u = otherUserOf(activeConv);
+                    return u ? (
+                      <div className="member-row" onClick={() => openProfile(u)}>
+                        <UserAvatar name={u.username} size={32} src={u.avatarUrl ?? u.avatar_url ?? null} />
+                        <div>
+                          <div>{u.displayName || u.display_name || u.username}</div>
+                          <div className="muted">@{u.username}</div>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    ) : null;
+                  })()}
+                </div>
               </div>
-            </div>
+            )
           )}
           {rightPanel === 'files' && (
             <div className="right-panel-body">
@@ -1335,6 +1984,109 @@ export function MainChat() {
           {aiErr && <div className="form-error">{aiErr}</div>}
         </div>
       </Modal>
+
+      {/* MESSAGE ACTIONS CONTEXT MENU */}
+      {actionsMenu && (
+        <MessageActions
+          x={actionsMenu.x}
+          y={actionsMenu.y}
+          items={buildActionItems(actionsMenu.message)}
+          onSelect={(key) => handleActionSelect(key, actionsMenu.message)}
+          onClose={() => setActionsMenu(null)}
+        />
+      )}
+
+      {/* REACTION PICKER FLOATING */}
+      {reactionFor && (
+        <div className="reaction-float-wrap">
+          <div className="reaction-float-mask" onClick={() => setReactionFor(null)} />
+          <ReactionPicker
+            onSelect={(emoji) => {
+              void toggleReaction(reactionFor, emoji);
+              setReactionFor(null);
+            }}
+            onClose={() => setReactionFor(null)}
+          />
+        </div>
+      )}
+
+      {/* FORWARD MODAL */}
+      <Modal
+        open={!!forwardingMsg}
+        title="转发到"
+        onClose={() => setForwardingMsg(null)}
+        footer={
+          <button className="btn btn-ghost" onClick={() => setForwardingMsg(null)}>
+            取消
+          </button>
+        }
+      >
+        <div className="form">
+          <div className="muted">选择一个会话转发这条消息：</div>
+          {conversations.length === 0 && <div className="empty-list">暂无可转发的会话</div>}
+          {conversations
+            .filter((c) => c.id !== activeConv?.id)
+            .map((c) => {
+              const name =
+                c.type === 'group'
+                  ? c.name || '群聊'
+                  : otherUserOf(c)?.displayName ||
+                    otherUserOf(c)?.display_name ||
+                    otherUserOf(c)?.username ||
+                    '私聊';
+              return (
+                <div key={c.id} className="forward-row">
+                  <UserAvatar
+                    name={otherUserOf(c)?.username || '?'}
+                    size={32}
+                    src={
+                      c.type === 'group'
+                        ? null
+                        : otherUserOf(c)?.avatarUrl ?? otherUserOf(c)?.avatar_url ?? null
+                    }
+                  />
+                  <span className="forward-name">{name}</span>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => void doForward(c.id)}
+                  >
+                    转发
+                  </button>
+                </div>
+              );
+            })}
+        </div>
+      </Modal>
+
+      {/* 会话右键菜单 */}
+      {contextMenu && (
+        <ConversationMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          settings={convSettingsMap[contextMenu.conv.id]}
+          onClose={() => setContextMenu(null)}
+          onPin={() => void handleConvAction('pin')}
+          onMute={() => void handleConvAction('mute')}
+          onArchive={() => void handleConvAction('archive')}
+          onMarkRead={() => void handleConvAction('read')}
+          onMarkUnread={() => void handleConvAction('unread')}
+          onClear={() => void handleConvAction('clear')}
+          onDelete={() => void handleConvAction('delete')}
+        />
+      )}
+
+      {/* 用户资料卡 */}
+      <UserProfileModal
+        open={!!profileUser}
+        user={profileUser}
+        isFriend={profileUser ? isFriendOf(profileUser.id) : false}
+        isSelf={profileUser ? profileUser.id === myId : false}
+        onClose={() => setProfileUser(null)}
+        onSendMessage={(uid) => void openPrivateChat(uid)}
+        onAtMention={() => showToast('已 @ 该用户')}
+        onChange={() => void loadFriends()}
+      />
     </div>
   );
 }

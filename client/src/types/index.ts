@@ -43,6 +43,32 @@ export interface Message {
   readBy?: string[];
   read_by?: string[];
   isAi?: boolean;
+  // ---- message enhancements (reply / reaction / edit / pin) ----
+  reactions?: MessageReaction[] | null;
+  replyToId?: string | null;
+  reply_to_id?: string | null;
+  replyTo?: MessageReplyRef | null;
+  reply_to?: MessageReplyRef | null;
+  isEdited?: boolean;
+  is_edited?: boolean;
+  isPinned?: boolean;
+  is_pinned?: boolean;
+}
+
+export interface MessageReaction {
+  emoji: string;
+  count?: number;
+  mine?: boolean;
+  users?: string[];
+}
+
+export interface MessageReplyRef {
+  id: string;
+  senderId?: string;
+  sender_id?: string;
+  senderName?: string;
+  sender_name?: string;
+  content?: string;
 }
 
 export type ConversationType = 'private' | 'group' | 'ai';
@@ -54,6 +80,12 @@ export interface ConversationMember {
   joinedAt?: string;
   joined_at?: string;
   user?: User;
+  // Some backends flatten the member's user fields onto the row itself.
+  username?: string;
+  displayName?: string | null;
+  display_name?: string | null;
+  avatarUrl?: string | null;
+  avatar_url?: string | null;
 }
 
 export interface Conversation {
@@ -255,4 +287,100 @@ export interface AiProvider {
   provider: string;
   name: string;
   model: string;
+}
+
+// ---------- User settings & profile ----------
+export type FontSize = 'small' | 'medium' | 'large';
+export type ThemePreference = 'light' | 'dark' | 'system';
+
+export interface UserSettings {
+  theme?: ThemePreference;
+  fontSize?: FontSize;
+  notifications?: boolean;
+  sound?: boolean;
+  tempReminder?: boolean;
+  enterToSend?: boolean;
+  messagePreview?: boolean;
+  autoDownload?: boolean;
+  [key: string]: unknown;
+}
+
+export type UserStatusType = 'online' | 'away' | 'busy' | 'offline';
+
+export interface UserStatus {
+  userId: string;
+  user_id?: string;
+  status: UserStatusType;
+  customMessage?: string;
+  custom_message?: string;
+  updatedAt?: string;
+  updated_at?: string;
+}
+
+export interface MessageReaction {
+  id: string;
+  messageId: string;
+  message_id?: string;
+  userId: string;
+  user_id?: string;
+  emoji: string;
+  createdAt?: string;
+  created_at?: string;
+  user?: User;
+}
+
+export interface ConversationSettings {
+  conversationId: string;
+  conversation_id?: string;
+  muted?: boolean;
+  pinned?: boolean;
+  archived?: boolean;
+  nicknames?: Record<string, string>;
+  customNotifications?: boolean;
+  custom_notifications?: boolean;
+}
+
+export interface GroupAnnouncement {
+  conversationId?: string;
+  conversation_id?: string;
+  announcement?: string | null;
+  announcementText?: string | null;
+  content?: string | null;
+  updatedAt?: string | null;
+  updated_at?: string | null;
+}
+
+export interface GroupQrCode {
+  conversationId?: string;
+  conversation_id?: string;
+  token: string;
+  url?: string;
+  expiresAt?: string | null;
+  expires_at?: string | null;
+}
+
+export interface QuickReply {
+  id: string;
+  title: string;
+  content: string;
+  shortcut?: string | null;
+  sortOrder?: number;
+  sort_order?: number;
+  createdAt?: string;
+  created_at?: string;
+}
+
+export type AiProviderKind = 'qwen' | 'doubao' | 'deepseek' | 'zhipu' | 'custom';
+
+export interface UserAiConfig {
+  id: string;
+  provider: AiProviderKind | string;
+  name: string;
+  baseUrl: string;
+  base_url?: string;
+  apiKey?: string;
+  model: string;
+  isActive?: boolean;
+  createdAt?: string;
+  created_at?: string;
 }

@@ -1,4 +1,4 @@
-import type { Conversation } from '../types';
+import type { Conversation, ConversationSettings } from '../types';
 import { ConversationItem } from './ConversationItem';
 import { Spinner } from './Spinner';
 
@@ -7,9 +7,11 @@ interface Props {
   loading?: boolean;
   activeId?: string | null;
   onSelect: (c: Conversation) => void;
+  settingsMap?: Record<string, ConversationSettings>;
+  onContextMenu?: (e: React.MouseEvent, c: Conversation) => void;
 }
 
-export function ConversationList({ conversations, loading, activeId, onSelect }: Props) {
+export function ConversationList({ conversations, loading, activeId, onSelect, settingsMap, onContextMenu }: Props) {
   if (loading) {
     return (
       <div className="empty-list">
@@ -28,6 +30,8 @@ export function ConversationList({ conversations, loading, activeId, onSelect }:
           conversation={c}
           active={c.id === activeId}
           onClick={() => onSelect(c)}
+          settings={settingsMap?.[c.id]}
+          onContextMenu={onContextMenu ? (e) => onContextMenu(e, c) : undefined}
         />
       ))}
     </div>

@@ -1,4 +1,4 @@
-import type { Conversation } from '../types';
+import type { Conversation, ConversationSettings } from '../types';
 import { formatTime } from '../utils/format';
 import { UserAvatar } from './UserAvatar';
 import { Badge } from './Badge';
@@ -7,9 +7,11 @@ interface Props {
   conversation: Conversation;
   active?: boolean;
   onClick: () => void;
+  settings?: ConversationSettings;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
-export function ConversationItem({ conversation, active, onClick }: Props) {
+export function ConversationItem({ conversation, active, onClick, settings, onContextMenu }: Props) {
   const isGroup = conversation.type === 'group';
   const isAi = conversation.type === 'ai';
   const other = conversation.otherUser;
@@ -25,14 +27,22 @@ export function ConversationItem({ conversation, active, onClick }: Props) {
     last && last.sender ? last.sender.displayName || last.sender.display_name || last.sender.username : '';
   const preview = last
     ? last.messageType === 'image'
-      ? `[图片] ${last.content}`.trim()
+      ? `[图片]`
       : last.messageType === 'file'
-        ? `[文件] ${last.fileName || last.fileName || last.content}`
+        ? `[文件] ${last.fileName || last.file_name || ''}`.trim()
         : last.content
     : '暂无消息';
 
+  const pinned = !!settings?.pinned;
+  const muted = !!settings?.muted;
+  const unread = conversation.unreadCount ?? conversation.unread_count ?? 0;
+
   return (
-    <button className={`conv-item ${active ? 'active' : ''}`} onClick={onClick}>
+    <button
+      className={`conv-item ${active ? 'active' : ''} ${pinned ? 'pinned' : ''}`}
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+    >
       {isAi ? (
         <div className="user-avatar ai-bot" style={{ width: 44, height: 44 }}>
           🤖
@@ -46,9 +56,11 @@ export function ConversationItem({ conversation, active, onClick }: Props) {
       )}
       <div className="conv-item-body">
         <div className="conv-item-line">
+          {pinned && <span className="conv-pin" title="已置顶">📌</span>}
           <span className="conv-item-name">{name}</span>
           {isGroup && <Badge>群 {conversation.members?.length ?? 0}人</Badge>}
           {isAi && <Badge variant="warn">AI</Badge>}
+          {muted && <span className="conv-mute" title="免打扰">🔕</span>}
           {last && <span className="conv-item-time">{formatTime(last.createdAt)}</span>}
         </div>
         <div className="conv-item-line">
@@ -56,6 +68,7 @@ export function ConversationItem({ conversation, active, onClick }: Props) {
             {lastSender ? `${lastSender}: ` : ''}
             {preview}
           </span>
+          {unread > 0 && <span className="conv-unread">{unread > 99 ? '99+' : unread}</span>}
         </div>
       </div>
     </button>

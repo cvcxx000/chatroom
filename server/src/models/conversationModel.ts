@@ -148,3 +148,59 @@ export async function getLastMessage(conversationId: string): Promise<Message | 
   );
   return res.rows[0] || null;
 }
+
+/** Set a member's role within a conversation. */
+export async function setMemberRole(
+  conversationId: string,
+  userId: string,
+  role: 'member' | 'admin',
+): Promise<void> {
+  await query(
+    'UPDATE conversation_members SET role = $1 WHERE conversation_id = $2 AND user_id = $3',
+    [role, conversationId, userId],
+  );
+}
+
+/** Transfer group ownership: demote the old owner and promote the new one. */
+export async function transferGroupOwnership(
+  conversationId: string,
+  oldOwnerId: string,
+  newOwnerId: string,
+): Promise<void> {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, role)
+       VALUES ($1, $2, 'admin')
+       ON CONFLICT (conversation_id, user_id) DO UPDATE SET role = 'admin'`,
+      [conversationId, newOwnerId],
+    );
+    await client.query(
+      `UPDATE conversation_members SET role = 'member'
+       WHERE conversation_id = $1 AND user_id = $2`,
+      [conversationId, oldOwnerId],
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** Hard-delete a conversation (cascades to members, messages, etc.). */
+export async function deleteConversation(id: string): Promise<void> {
+  await query('DELETE FROM conversations WHERE id = $1', [id]);
+}
+
+/** Count admins in a conversation. */
+export async function countAdminsInConversation(conversationId: string): Promise<number> {
+  const res = await query<{ count: string }>(
+    `SELECT COUNT(*)::int AS count FROM conversation_members
+     WHERE conversation_id = $1 AND role = 'admin'`,
+    [conversationId],
+  );
+  return parseInt(res.rows[0]?.count || '0', 10);
+}

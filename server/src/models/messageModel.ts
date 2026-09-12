@@ -78,3 +78,48 @@ export async function listRecentMessages(
   const rows = await listMessagesBefore(conversationId, null, limit);
   return rows.reverse();
 }
+
+/** Fetch a single message by id. */
+export async function getMessageById(id: string): Promise<Message | null> {
+  const res = await query<Message>('SELECT * FROM messages WHERE id = $1 LIMIT 1', [id]);
+  return res.rows[0] || null;
+}
+
+/** Edit a message's content. */
+export async function editMessageContent(
+  id: string,
+  content: string,
+): Promise<Message | null> {
+  const res = await query<Message>(
+    `UPDATE messages SET content = $1 WHERE id = $2 RETURNING *`,
+    [content, id],
+  );
+  return res.rows[0] || null;
+}
+
+/** Hard-delete a message. */
+export async function deleteMessageById(id: string): Promise<void> {
+  await query('DELETE FROM messages WHERE id = $1', [id]);
+}
+
+/** Search messages within a conversation by content (ILIKE). */
+export async function searchMessagesInConversation(
+  conversationId: string,
+  q: string,
+  limit = 50,
+): Promise<Message[]> {
+  const pattern = `%${q}%`;
+  const res = await query<Message>(
+    `SELECT * FROM messages
+     WHERE conversation_id = $1 AND content ILIKE $2
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [conversationId, pattern, limit],
+  );
+  return res.rows;
+}
+
+/** Delete all messages in a conversation (used by clear chat history). */
+export async function clearMessagesInConversation(conversationId: string): Promise<void> {
+  await query('DELETE FROM messages WHERE conversation_id = $1', [conversationId]);
+}

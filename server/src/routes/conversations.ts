@@ -24,6 +24,9 @@ import {
   listMessagesBefore,
   listRecentMessages,
   updateMessageContent,
+  searchMessagesInConversation,
+  getMessageById,
+  clearMessagesInConversation,
 } from '../models/messageModel';
 import {
   createGroupFile,
@@ -38,6 +41,22 @@ import {
   callAiStream,
   ChatMessage,
 } from '../services/ai';
+import {
+  pinMessage,
+  unpinMessage,
+  listPinnedMessages,
+} from '../models/pinnedMessageModel';
+import {
+  setAnnouncement,
+  getLatestAnnouncement,
+} from '../models/groupAnnouncementModel';
+import { setGroupNickname } from '../models/groupNicknameModel';
+import {
+  transferGroupOwnership,
+  deleteConversation,
+  countAdminsInConversation,
+  setMemberRole,
+} from '../models/conversationModel';
 
 const router = Router();
 
@@ -360,6 +379,244 @@ router.post('/:id/files', upload.single('file'), async (req: AuthedRequest, res:
     fileType: req.file.mimetype,
   });
   return ok(res, gf);
+});
+
+// ============================================================
+// Message search / pin (conversation-scoped)
+// ============================================================
+
+/** GET /api/conversations/:id/search?q= - search messages in conversation. */
+router.get('/:id/search', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, req.user!.id))) {
+    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  const q = String(req.query.q || '').trim();
+  if (!q) return ok(res, []);
+  const messages = await searchMessagesInConversation(conv.id, q, 50);
+  return ok(res, messages);
+});
+
+/** POST /api/conversations/:id/pin - pin a message. body: { messageId } */
+router.post('/:id/pin', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, req.user!.id))) {
+    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  const { messageId } = req.body || {};
+  if (!messageId) return fail(res, 400, 'messageId required', 'BAD_REQUEST');
+  const msg = await getMessageById(String(messageId));
+  if (!msg || msg.conversation_id !== conv.id) {
+    return fail(res, 404, 'message not found in this conversation', 'NOT_FOUND');
+  }
+  const pinned = await pinMessage(conv.id, msg.id, req.user!.id);
+  await broadcastToConversation(conv.id, {
+    type: 'message_pinned',
+    conversationId: conv.id,
+    messageId: msg.id,
+    pinnedBy: req.user!.id,
+  });
+  return ok(res, pinned);
+});
+
+/** DELETE /api/conversations/:id/pin/:messageId - unpin a message. */
+router.delete('/:id/pin/:messageId', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, req.user!.id))) {
+    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  await unpinMessage(conv.id, req.params.messageId);
+  await broadcastToConversation(conv.id, {
+    type: 'message_unpinned',
+    conversationId: conv.id,
+    messageId: req.params.messageId,
+  });
+  return ok(res, { ok: true });
+});
+
+/** GET /api/conversations/:id/pinned - list pinned messages. */
+router.get('/:id/pinned', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, req.user!.id))) {
+    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  const pinned = await listPinnedMessages(conv.id);
+  const messages = [];
+  for (const p of pinned) {
+    const m = await getMessageById(p.message_id);
+    if (m) messages.push({ ...p, message: m });
+  }
+  return ok(res, messages);
+});
+
+// ============================================================
+// Group management
+// ============================================================
+
+/** PUT /api/conversations/:id/announcement - set group announcement (admin). */
+router.put('/:id/announcement', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (conv.type !== 'group') return fail(res, 400, 'not a group', 'BAD_REQUEST');
+  const role = await getMemberRole(conv.id, req.user!.id);
+  if (role !== 'admin') return fail(res, 403, 'only group admin', 'FORBIDDEN');
+  const { content } = req.body || {};
+  if (typeof content !== 'string') {
+    return fail(res, 400, 'content required', 'BAD_REQUEST');
+  }
+  const ann = await setAnnouncement(conv.id, content, req.user!.id);
+  await broadcastToConversation(conv.id, {
+    type: 'announcement_updated',
+    conversationId: conv.id,
+    announcement: ann,
+  });
+  return ok(res, ann);
+});
+
+/** GET /api/conversations/:id/announcement - get latest group announcement. */
+router.get('/:id/announcement', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, req.user!.id))) {
+    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  const ann = await getLatestAnnouncement(conv.id);
+  return ok(res, ann);
+});
+
+/** PUT /api/conversations/:id/nickname - set my group nickname. */
+router.put('/:id/nickname', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, req.user!.id))) {
+    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  const { nickname } = req.body || {};
+  if (typeof nickname !== 'string' || nickname.trim().length === 0) {
+    return fail(res, 400, 'nickname required', 'BAD_REQUEST');
+  }
+  const row = await setGroupNickname(conv.id, req.user!.id, nickname.trim());
+  return ok(res, row);
+});
+
+/** POST /api/conversations/:id/transfer - transfer group ownership. body: { newOwnerId } */
+router.post('/:id/transfer', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (conv.type !== 'group') return fail(res, 400, 'not a group', 'BAD_REQUEST');
+  const role = await getMemberRole(conv.id, req.user!.id);
+  if (role !== 'admin') {
+    return fail(res, 403, 'only current owner/admin can transfer', 'FORBIDDEN');
+  }
+  const { newOwnerId } = req.body || {};
+  if (!newOwnerId) return fail(res, 400, 'newOwnerId required', 'BAD_REQUEST');
+  const newOwner = await findUserById(String(newOwnerId));
+  if (!newOwner) return fail(res, 404, 'new owner not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, newOwner.id))) {
+    return fail(res, 400, 'new owner is not a member', 'BAD_REQUEST');
+  }
+  await transferGroupOwnership(conv.id, req.user!.id, newOwner.id);
+  await broadcastToConversation(conv.id, {
+    type: 'ownership_transferred',
+    conversationId: conv.id,
+    oldOwnerId: req.user!.id,
+    newOwnerId: newOwner.id,
+  });
+  return ok(res, { ok: true });
+});
+
+/** POST /api/conversations/:id/leave - leave a group. */
+router.post('/:id/leave', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (conv.type !== 'group') return fail(res, 400, 'not a group', 'BAD_REQUEST');
+  const role = await getMemberRole(conv.id, req.user!.id);
+  if (!role) return fail(res, 403, 'not a member', 'FORBIDDEN');
+  // If the last admin leaves, promote another member if any.
+  if (role === 'admin') {
+    const adminCount = await countAdminsInConversation(conv.id);
+    if (adminCount <= 1) {
+      const members = await getMembers(conv.id);
+      const other = members.find((m) => m.user_id !== req.user!.id);
+      if (other) {
+        await setMemberRole(conv.id, other.user_id, 'admin');
+      }
+    }
+  }
+  await removeMember(conv.id, req.user!.id);
+  await broadcastToConversation(conv.id, {
+    type: 'member_left',
+    conversationId: conv.id,
+    userId: req.user!.id,
+  });
+  return ok(res, { ok: true });
+});
+
+/** GET /api/conversations/:id/qrcode - get group invite QR token. */
+router.get('/:id/qrcode', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, req.user!.id))) {
+    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  const token = crypto.randomBytes(24).toString('hex');
+  const payload = JSON.stringify({ t: 'group_invite', c: conv.id, token });
+  return ok(res, { token, payload, conversationId: conv.id });
+});
+
+/** POST /api/conversations/:id/clear - clear chat history. */
+router.post('/:id/clear', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, req.user!.id))) {
+    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  await clearMessagesInConversation(conv.id);
+  await broadcastToConversation(conv.id, {
+    type: 'conversation_cleared',
+    conversationId: conv.id,
+  });
+  return ok(res, { ok: true });
+});
+
+/** DELETE /api/conversations/:id - delete conversation / leave. */
+router.delete('/:id', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, req.user!.id))) {
+    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  // For groups: just remove membership. For private/ai: hard-delete.
+  if (conv.type === 'group') {
+    await removeMember(conv.id, req.user!.id);
+  } else {
+    await deleteConversation(conv.id);
+  }
+  return ok(res, { ok: true });
+});
+
+/** POST /api/conversations/:id/read - mark conversation as read. */
+router.post('/:id/read', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, req.user!.id))) {
+    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  return ok(res, { conversationId: conv.id, read: true });
+});
+
+/** POST /api/conversations/:id/unread - mark conversation as unread. */
+router.post('/:id/unread', async (req: AuthedRequest, res: Response) => {
+  const conv = await findConversationById(req.params.id);
+  if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  if (!(await isMember(conv.id, req.user!.id))) {
+    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  return ok(res, { conversationId: conv.id, unread: true });
 });
 
 export { UPLOAD_DIR };

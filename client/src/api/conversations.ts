@@ -1,5 +1,5 @@
 import api from './client';
-import type { Conversation, Message } from '../types';
+import type { Conversation, GroupAnnouncement, GroupQrCode, Message } from '../types';
 
 export const conversationsApi = {
   list: async (): Promise<Conversation[]> => {
@@ -40,5 +40,39 @@ export const conversationsApi = {
     },
   ): Promise<Message> => {
     return (await api.post(`/conversations/${id}/messages`, payload)) as unknown as Message;
+  },
+  // ---------- group management ----------
+  getAnnouncement: async (id: string): Promise<GroupAnnouncement> => {
+    return (await api.get(`/conversations/${id}/announcement`)) as unknown as GroupAnnouncement;
+  },
+  setAnnouncement: async (id: string, announcement: string): Promise<GroupAnnouncement> => {
+    return (await api.put(`/conversations/${id}/announcement`, {
+      announcement,
+    })) as unknown as GroupAnnouncement;
+  },
+  setNickname: async (id: string, nickname: string): Promise<{ ok: boolean }> => {
+    return (await api.put(`/conversations/${id}/nickname`, { nickname })) as unknown as { ok: boolean };
+  },
+  transferOwner: async (id: string, userId: string): Promise<{ ok: boolean }> => {
+    return (await api.post(`/conversations/${id}/transfer`, { userId })) as unknown as { ok: boolean };
+  },
+  leaveGroup: async (id: string): Promise<{ ok: boolean }> => {
+    return (await api.post(`/conversations/${id}/leave`)) as unknown as { ok: boolean };
+  },
+  getQrCode: async (id: string): Promise<GroupQrCode> => {
+    return (await api.get(`/conversations/${id}/qrcode`)) as unknown as GroupQrCode;
+  },
+  // ---------- conversation lifecycle ----------
+  clearHistory: async (id: string): Promise<{ ok: boolean }> => {
+    return (await api.post(`/conversations/${id}/clear`)) as unknown as { ok: boolean };
+  },
+  deleteConversation: async (id: string): Promise<{ ok: boolean }> => {
+    return (await api.delete(`/conversations/${id}`)) as unknown as { ok: boolean };
+  },
+  markRead: async (id: string): Promise<{ ok: boolean }> => {
+    return (await api.put(`/conversations/${id}/read`)) as unknown as { ok: boolean };
+  },
+  markUnread: async (id: string): Promise<{ ok: boolean }> => {
+    return (await api.put(`/conversations/${id}/unread`)) as unknown as { ok: boolean };
   },
 };

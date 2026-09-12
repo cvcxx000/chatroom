@@ -52,9 +52,13 @@ export async function updateLastLogin(id: string): Promise<void> {
   await query('UPDATE users SET last_login_at = now() WHERE id = $1', [id]);
 }
 
+export async function updatePasswordHash(id: string, passwordHash: string): Promise<void> {
+  await query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, id]);
+}
+
 export async function updateProfile(
   id: string,
-  data: { displayName?: string; avatarUrl?: string },
+  data: { displayName?: string; avatarUrl?: string; email?: string | null },
 ): Promise<User | null> {
   const fields: string[] = [];
   const params: unknown[] = [];
@@ -66,6 +70,10 @@ export async function updateProfile(
   if (data.avatarUrl !== undefined) {
     fields.push(`avatar_url = $${i++}`);
     params.push(data.avatarUrl);
+  }
+  if (data.email !== undefined) {
+    fields.push(`email = $${i++}`);
+    params.push(data.email);
   }
   if (fields.length === 0) return findUserById(id);
   params.push(id);
