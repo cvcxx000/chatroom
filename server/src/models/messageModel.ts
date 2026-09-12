@@ -57,3 +57,24 @@ export async function countMessages(): Promise<number> {
   const res = await query<{ count: string }>('SELECT COUNT(*)::int AS count FROM messages');
   return parseInt(res.rows[0]?.count || '0', 10);
 }
+
+/** Update a message's content (used to finalize streamed AI replies). */
+export async function updateMessageContent(
+  id: string,
+  content: string,
+): Promise<Message | null> {
+  const res = await query<Message>(
+    'UPDATE messages SET content = $1 WHERE id = $2 RETURNING *',
+    [content, id],
+  );
+  return res.rows[0] || null;
+}
+
+/** Fetch the latest N messages in chronological order (oldest -> newest). */
+export async function listRecentMessages(
+  conversationId: string,
+  limit = 20,
+): Promise<Message[]> {
+  const rows = await listMessagesBefore(conversationId, null, limit);
+  return rows.reverse();
+}

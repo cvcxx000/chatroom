@@ -2,7 +2,7 @@ import { query, getClient } from '../config/db';
 import { Conversation, ConversationMember, Message, User } from './types';
 
 export async function createConversation(data: {
-  type: 'private' | 'group';
+  type: 'private' | 'group' | 'ai';
   name?: string | null;
   createdBy: string;
   memberIds: string[];

@@ -42,9 +42,10 @@ export interface Message {
   created_at?: string;
   readBy?: string[];
   read_by?: string[];
+  isAi?: boolean;
 }
 
-export type ConversationType = 'private' | 'group';
+export type ConversationType = 'private' | 'group' | 'ai';
 
 export interface ConversationMember {
   userId: string;
@@ -194,6 +195,7 @@ export type WsServerMessage =
   | { type: 'user_banned' }
   | { type: 'temp_message'; tempId: string; message: TempMessage; expiresAt: string }
   | { type: 'temp_expired'; tempId: string }
+  | { type: 'ai_stream'; conversationId: string; messageId: string; delta: string; done?: boolean }
   | { type: 'error'; message: string };
 
 export type WsClientMessage =
@@ -203,3 +205,47 @@ export type WsClientMessage =
   | { type: 'read_receipt'; conversationId: string; messageId: string }
   | { type: 'temp_join'; tempId: string }
   | { type: 'temp_message'; tempId: string; content: string };
+
+// ---------- Shared links ----------
+export interface SharedLink {
+  token: string;
+  url: string;
+  expiresAt: string;
+  hasPassword: boolean;
+  conversationId: string;
+}
+
+export interface ShareInfo {
+  conversationId: string;
+  type: 'private' | 'group' | 'ai';
+  name?: string | null;
+  requiresPassword: boolean;
+  expiresAt: string;
+}
+
+// ---------- QR login ----------
+export interface QrSession {
+  token: string;
+  expiresAt: string;
+  status: 'pending' | 'scanned' | 'confirmed' | 'expired';
+  user?: User;
+}
+
+// ---------- AI ----------
+export interface AiConfig {
+  id: string;
+  provider: string;
+  name: string;
+  baseUrl: string;
+  apiKey?: string; // masked from admin
+  model: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface AiProvider {
+  id: string;
+  provider: string;
+  name: string;
+  model: string;
+}

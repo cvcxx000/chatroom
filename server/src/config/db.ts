@@ -51,11 +51,21 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
   throw lastErr;
 }
 
+/** A pooled client handle (PGlite-backed) used for transactions. */
+export interface DbClient {
+  query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    params?: unknown[],
+  ): Promise<QueryResult<T>>;
+  release(): void;
+}
+
 /** Acquire a client from the pool (for transactions). */
-export async function getClient(): Promise<any> {
+export async function getClient(): Promise<DbClient> {
   const pg = getPool();
   return {
-    query: (text: string, params?: unknown[]) => pg.query(text, params as any[]),
+    query: <T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]) =>
+      pg.query<T>(text, params as any[]) as unknown as Promise<QueryResult<T>>,
     release: () => {},
   };
 }

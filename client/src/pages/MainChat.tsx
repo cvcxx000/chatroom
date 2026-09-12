@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { aiApi } from '../api/ai';
 import { conversationsApi } from '../api/conversations';
 import { filesApi } from '../api/files';
 import { friendsApi } from '../api/friends';
+import { qrApi } from '../api/qr';
+import { shareApi } from '../api/share';
 import { tempApi } from '../api/temp';
 import { usersApi } from '../api/users';
 import { useAuth } from '../context/AuthContext';
@@ -19,11 +22,13 @@ import { Spinner } from '../components/Spinner';
 import { TypingIndicator } from '../components/TypingIndicator';
 import { UserAvatar } from '../components/UserAvatar';
 import type {
+  AiProvider,
   Conversation,
   Friend,
   FriendRequest,
   GroupFile,
   Message,
+  SharedLink,
   TempMessage,
   User,
 } from '../types';
@@ -64,10 +69,47 @@ export function MainChat() {
   const [activeTemp, setActiveTemp] = useState<ActiveTemp | null>(null);
   const [tempList, setTempList] = useState<ActiveTemp[]>([]);
 
+  // ---------- mobile ----------
+  const [isMobile, setIsMobile] = useState<boolean>(() => window.innerWidth < 768);
+  const [showChat, setShowChat] = useState(false);
+
+  // ---------- share link ----------
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareExpires, setShareExpires] = useState<number>(24);
+  const [sharePassword, setSharePassword] = useState('');
+  const [generatedLink, setGeneratedLink] = useState<SharedLink | null>(null);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareErr, setShareErr] = useState('');
+
+  // ---------- scan (mobile-side simulate) ----------
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanTokenInput, setScanTokenInput] = useState('');
+  const [scanState, setScanState] = useState<'idle' | 'scanned' | 'done' | 'error'>('idle');
+  const [scanMsg, setScanMsg] = useState('');
+
+  // ---------- AI conversation ----------
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiProviders, setAiProviders] = useState<AiProvider[]>([]);
+  const [aiSelected, setAiSelected] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiErr, setAiErr] = useState('');
+
+  // ---------- toast ----------
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const [searchParams] = useSearchParams();
+
   const msgEndRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const activeConvIdRef = useRef<string | null>(null);
 
   const myId = user?.id;
+
+  // keep active conversation id in a ref for WS handlers
+  useEffect(() => {
+    activeConvIdRef.current = activeConv?.id ?? null;
+  }, [activeConv]);
 
   // ---------- loaders ----------
   const loadConversations = useCallback(async () => {
@@ -92,11 +134,38 @@ export function MainChat() {
     }
   }, []);
 
+  const showToast = useCallback((text: string) => {
+    setToast(text);
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000);
+  }, []);
+
+  // ---------- mobile breakpoint ----------
+  useEffect(() => {
+    const onResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) setShowChat(true);
+    };
+    window.addEventListener('resize', onResize);
+    onResize();
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   useEffect(() => {
     if (!myId) return;
     loadConversations();
     loadFriends();
   }, [myId, loadConversations, loadFriends]);
+
+  // ---------- auto-open conversation from ?open= (e.g. after joining a share link) ----------
+  useEffect(() => {
+    const openId = searchParams.get('open');
+    if (!openId || !conversations.length || activeConv) return;
+    const target = conversations.find((c) => c.id === openId);
+    if (target) void openConversation(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, conversations]);
 
   // ---------- WS: new_message ----------
   useEffect(() => {
@@ -124,11 +193,37 @@ export function MainChat() {
         return { ...prev, [convId]: set };
       });
     });
-    const offFriendReq = socket.on('friend_request', () => {
+    const offFriendReq = socket.on('friend_request', (p: any) => {
       loadFriends();
+      const name =
+        p?.fromUser?.displayName || p?.fromUser?.display_name || p?.fromUser?.username;
+      if (name) showToast(`${name} 发来好友请求`);
     });
     const offFriendAccept = socket.on('friend_accepted', () => {
       loadFriends();
+    });
+    const offAiStream = socket.on('ai_stream', (p: any) => {
+      const { conversationId, messageId, delta, done } = p;
+      if (conversationId && conversationId !== activeConvIdRef.current) return;
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === messageId);
+        if (idx === -1) {
+          const placeholder: Message = {
+            id: messageId,
+            conversationId,
+            content: delta || '',
+            messageType: 'text',
+            createdAt: new Date().toISOString(),
+            isAi: true,
+            sender: { id: 'ai', username: 'ai_assistant' } as User,
+          };
+          return [...prev, placeholder];
+        }
+        const next = [...prev];
+        next[idx] = { ...next[idx], content: (next[idx].content || '') + (delta || '') };
+        if (done) next[idx] = { ...next[idx], isAi: next[idx].isAi ?? true };
+        return next;
+      });
     });
     const offBanned = socket.on('user_banned', () => {
       logout();
@@ -157,11 +252,12 @@ export function MainChat() {
       offTyping();
       offFriendReq();
       offFriendAccept();
+      offAiStream();
       offBanned();
       offTempMsg();
       offTempExpired();
     };
-  }, [myId, socket, loadFriends, logout, navigate]);
+  }, [myId, socket, loadFriends, logout, navigate, showToast]);
 
   // ---------- open conversation ----------
   const openConversation = useCallback(
@@ -169,6 +265,8 @@ export function MainChat() {
       setActiveConv(c);
       setActiveTemp(null);
       setRightPanel(c.type === 'group' ? 'info' : null);
+      setGeneratedLink(null);
+      setShowChat(true);
       setMessages([]);
       setLoadingMessages(true);
       socket.joinConversation(c.id);
@@ -346,6 +444,101 @@ export function MainChat() {
     }
   };
 
+  // ---------- share link ----------
+  const openShareModal = () => {
+    setGeneratedLink(null);
+    setSharePassword('');
+    setShareExpires(24);
+    setShareErr('');
+    setShareOpen(true);
+  };
+
+  const generateShare = async () => {
+    if (!activeConv) return;
+    setShareBusy(true);
+    setShareErr('');
+    try {
+      const link = await shareApi.generate(
+        activeConv.id,
+        shareExpires,
+        sharePassword.trim() || undefined,
+      );
+      setGeneratedLink(link);
+    } catch (e) {
+      setShareErr(prettyError(e));
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const copyLink = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('链接已复制');
+    } catch {
+      window.prompt('复制链接', text);
+    }
+  };
+
+  // ---------- scan (mobile side simulation) ----------
+  const doScan = async () => {
+    const t = scanTokenInput.trim();
+    if (!t) return;
+    setScanMsg('');
+    try {
+      await qrApi.scan(t);
+      setScanState('scanned');
+      setScanMsg('已扫码，请确认登录');
+    } catch (e) {
+      setScanState('error');
+      setScanMsg(prettyError(e));
+    }
+  };
+
+  const doConfirmScan = async () => {
+    const t = scanTokenInput.trim();
+    setScanMsg('');
+    try {
+      await qrApi.confirm(t);
+      setScanState('done');
+      setScanMsg('已确认登录');
+    } catch (e) {
+      setScanState('error');
+      setScanMsg(prettyError(e));
+    }
+  };
+
+  // ---------- AI conversation ----------
+  const openAiModal = async () => {
+    setAiOpen(true);
+    setAiErr('');
+    setAiSelected('');
+    try {
+      const list = await aiApi.listProviders();
+      setAiProviders(list);
+    } catch (e) {
+      setAiProviders([]);
+      setAiErr(prettyError(e));
+    }
+  };
+
+  const startAiConversation = async () => {
+    if (!aiSelected) return;
+    setAiBusy(true);
+    setAiErr('');
+    try {
+      const conv = await aiApi.createConversation(aiSelected);
+      setAiOpen(false);
+      await loadConversations();
+      await openConversation(conv);
+      setSidebarTab('chats');
+    } catch (e) {
+      setAiErr(prettyError(e));
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   // ---------- render helpers ----------
   const otherUserOf = (c: Conversation): User | undefined => {
     if (c.otherUser) return c.otherUser;
@@ -368,10 +561,12 @@ export function MainChat() {
   const convTitle = activeConv
     ? activeConv.type === 'group'
       ? activeConv.name || '群聊'
-      : otherUserOf(activeConv)?.displayName ||
-        otherUserOf(activeConv)?.display_name ||
-        otherUserOf(activeConv)?.username ||
-        '私聊'
+      : activeConv.type === 'ai'
+        ? activeConv.name || 'AI 助手'
+        : otherUserOf(activeConv)?.displayName ||
+          otherUserOf(activeConv)?.display_name ||
+          otherUserOf(activeConv)?.username ||
+          '私聊'
     : activeTemp
       ? `${activeTemp.otherUser.displayName || activeTemp.otherUser.username}（临时）`
       : '选择一个会话';
@@ -392,7 +587,9 @@ export function MainChat() {
   if (!user) return null;
 
   return (
-    <div className={`chat-app ${activeTemp ? 'temp-active' : ''}`}>
+    <div className={`chat-app ${activeTemp ? 'temp-active' : ''} ${isMobile && showChat ? 'chat-view' : ''}`}>
+      {/* TOAST */}
+      {toast && <div className="toast">{toast}</div>}
       {/* LEFT SIDEBAR */}
       <aside className="sidebar">
         <div className="sidebar-profile">
@@ -401,6 +598,18 @@ export function MainChat() {
             <div className="sidebar-profile-name">{user.displayName || user.username}</div>
             <div className="muted">@{user.username}</div>
           </div>
+          <button
+            className="icon-btn"
+            title="扫一扫"
+            onClick={() => {
+              setScanOpen(true);
+              setScanTokenInput('');
+              setScanState('idle');
+              setScanMsg('');
+            }}
+          >
+            📷
+          </button>
           <button
             className="icon-btn"
             title="退出登录"
@@ -432,6 +641,9 @@ export function MainChat() {
               <button className="btn btn-secondary btn-sm" onClick={() => setCreateGroupOpen(true)}>
                 + 新建群聊
               </button>
+              <button className="btn btn-secondary btn-sm" onClick={openAiModal}>
+                🤖 + AI 对话
+              </button>
             </div>
             <ConversationList
               conversations={conversations}
@@ -444,6 +656,11 @@ export function MainChat() {
 
         {sidebarTab === 'friends' && (
           <div className="sidebar-scroll">
+            <div className="friend-toolbar">
+              <button className="btn btn-ghost btn-sm" onClick={() => void loadFriends()}>
+                🔄 刷新
+              </button>
+            </div>
             <div className="friend-search">
               <input
                 placeholder="按用户名搜索添加好友"
@@ -587,26 +804,38 @@ export function MainChat() {
                 </>
               ) : activeConv ? (
                 <>
-                  <UserAvatar
-                    name={activeConv.type === 'group' ? activeConv.name : otherUserOf(activeConv)?.username}
-                    src={
-                      activeConv.type === 'group'
-                        ? null
-                        : otherUserOf(activeConv)?.avatarUrl ?? otherUserOf(activeConv)?.avatar_url ?? null
-                    }
-                    size={36}
-                  />
+                  {isMobile && (
+                    <button className="icon-btn chat-back" onClick={() => setShowChat(false)} aria-label="返回">
+                      ←
+                    </button>
+                  )}
+                  {activeConv.type === 'ai' ? (
+                    <div className="ai-avatar">🤖</div>
+                  ) : (
+                    <UserAvatar
+                      name={activeConv.type === 'group' ? activeConv.name : otherUserOf(activeConv)?.username}
+                      src={
+                        activeConv.type === 'group'
+                          ? null
+                          : otherUserOf(activeConv)?.avatarUrl ?? otherUserOf(activeConv)?.avatar_url ?? null
+                      }
+                      size={36}
+                    />
+                  )}
                   <div className="chat-header-meta">
                     <div className="chat-header-name">
                       {convTitle}
                       {activeConv.type === 'group' && (
                         <Badge>{activeConv.members?.length ?? 0} 人</Badge>
                       )}
+                      {activeConv.type === 'ai' && <Badge variant="warn">AI</Badge>}
                     </div>
                     <div className="muted">
                       {activeConv.type === 'group'
                         ? '群聊'
-                        : `@${otherUserOf(activeConv)?.username || ''}`}
+                        : activeConv.type === 'ai'
+                          ? 'AI 助手'
+                          : `@${otherUserOf(activeConv)?.username || ''}`}
                     </div>
                   </div>
                   <div className="chat-header-actions">
@@ -620,11 +849,7 @@ export function MainChat() {
                     )}
                     <button
                       className="btn btn-ghost btn-sm"
-                      onClick={() =>
-                        setRightPanel(
-                          rightPanel === 'info' ? null : activeConv.type === 'group' ? 'info' : null,
-                        )
-                      }
+                      onClick={() => setRightPanel(rightPanel === 'info' ? null : 'info')}
                     >
                       ℹ️ 资料
                     </button>
@@ -673,6 +898,11 @@ export function MainChat() {
                       isMine={(g.message!.senderId || g.message!.sender_id) === myId}
                       createdAt={g.message!.createdAt}
                       showSender={activeConv?.type === 'group'}
+                      isAi={
+                        g.message!.isAi ||
+                        g.message!.sender?.username === 'ai_assistant' ||
+                        activeConv?.type === 'ai'
+                      }
                       senderName={
                         g.message!.sender?.displayName ||
                         g.message!.sender?.display_name ||
@@ -719,6 +949,11 @@ export function MainChat() {
           </div>
           {rightPanel === 'info' && (
             <div className="right-panel-body">
+              <div className="share-block">
+                <button className="btn btn-primary btn-block" onClick={openShareModal}>
+                  🔗 生成共享链接
+                </button>
+              </div>
               <div className="members-block">
                 <div className="section-title">
                   成员 ({activeConv.members?.length ?? 0})
@@ -807,6 +1042,155 @@ export function MainChat() {
               </label>
             );
           })}
+        </div>
+      </Modal>
+
+      {/* SHARE LINK MODAL */}
+      <Modal
+        open={shareOpen}
+        title="生成共享链接"
+        onClose={() => setShareOpen(false)}
+        footer={
+          generatedLink ? (
+            <button className="btn btn-primary" onClick={() => setShareOpen(false)}>
+              完成
+            </button>
+          ) : (
+            <>
+              <button className="btn btn-ghost" onClick={() => setShareOpen(false)}>
+                取消
+              </button>
+              <button className="btn btn-primary" onClick={generateShare} disabled={shareBusy}>
+                {shareBusy ? <Spinner size={14} /> : null}
+                生成
+              </button>
+            </>
+          )
+        }
+      >
+        {generatedLink ? (
+          <div className="form">
+            <div className="inline-msg ok">共享链接已生成</div>
+            <label>
+              链接
+              <input readOnly value={generatedLink.url} onFocus={(e) => e.target.select()} />
+            </label>
+            <button className="btn btn-secondary" onClick={() => void copyLink(generatedLink.url)}>
+              复制链接
+            </button>
+            <div className="muted">
+              {generatedLink.expiresAt
+                ? `有效期至 ${new Date(generatedLink.expiresAt).toLocaleString()}`
+                : ''}
+              {generatedLink.hasPassword ? ' · 已设置访问密码' : ''}
+            </div>
+          </div>
+        ) : (
+          <div className="form">
+            <label>
+              有效期
+              <select
+                value={shareExpires}
+                onChange={(e) => setShareExpires(Number(e.target.value))}
+              >
+                <option value={24}>24 小时</option>
+                <option value={72}>72 小时</option>
+                <option value={168}>7 天</option>
+              </select>
+            </label>
+            <label>
+              访问密码（可选）
+              <input
+                type="password"
+                value={sharePassword}
+                onChange={(e) => setSharePassword(e.target.value)}
+                placeholder="留空则无需密码"
+              />
+            </label>
+            {shareErr && <div className="form-error">{shareErr}</div>}
+          </div>
+        )}
+      </Modal>
+
+      {/* SCAN MODAL (mobile-side simulate) */}
+      <Modal
+        open={scanOpen}
+        title="扫一扫"
+        onClose={() => setScanOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setScanOpen(false)}>
+              关闭
+            </button>
+            {scanState === 'idle' && (
+              <button className="btn btn-primary" onClick={doScan} disabled={!scanTokenInput.trim()}>
+                扫码
+              </button>
+            )}
+            {scanState === 'scanned' && (
+              <button className="btn btn-primary" onClick={doConfirmScan}>
+                确认登录
+              </button>
+            )}
+          </>
+        }
+      >
+        <div className="form">
+          <label>
+            输入二维码中的 token
+            <input
+              value={scanTokenInput}
+              onChange={(e) => setScanTokenInput(e.target.value)}
+              placeholder="粘贴扫码得到的 token"
+              disabled={scanState === 'scanned' || scanState === 'done'}
+            />
+          </label>
+          {scanMsg && <div className={scanState === 'error' ? 'form-error' : 'inline-msg ok'}>{scanMsg}</div>}
+          {scanState === 'done' && <div className="inline-msg ok">已确认，电脑端将自动登录</div>}
+        </div>
+      </Modal>
+
+      {/* AI CONVERSATION MODAL */}
+      <Modal
+        open={aiOpen}
+        title="新建 AI 对话"
+        onClose={() => setAiOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setAiOpen(false)}>
+              取消
+            </button>
+            <button className="btn btn-primary" onClick={startAiConversation} disabled={!aiSelected || aiBusy}>
+              {aiBusy ? <Spinner size={14} /> : null}
+              开始对话
+            </button>
+          </>
+        }
+      >
+        <div className="form">
+          {aiProviders.length === 0 && !aiErr && <div className="empty-list">正在加载可用模型…</div>}
+          {aiProviders.length === 0 && aiErr && (
+            <div className="inline-msg err">管理员未配置 AI 或加载失败</div>
+          )}
+          {aiProviders.length > 0 && (
+            <>
+              <div className="section-title">选择 AI 提供商</div>
+              {aiProviders.map((p) => (
+                <label key={p.id} className="radio-row">
+                  <input
+                    type="radio"
+                    name="ai-provider"
+                    checked={aiSelected === p.id}
+                    onChange={() => setAiSelected(p.id)}
+                  />
+                  <span>
+                    {p.name} <span className="muted">· {p.provider} / {p.model}</span>
+                  </span>
+                </label>
+              ))}
+            </>
+          )}
+          {aiErr && <div className="form-error">{aiErr}</div>}
         </div>
       </Modal>
     </div>

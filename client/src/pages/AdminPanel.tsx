@@ -1,16 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { adminApi, type AdminUserList } from '../api/admin';
+import { adminApi, type AdminUserList, type AiConfigPayload } from '../api/admin';
 import { useAuth } from '../context/AuthContext';
 import { Badge } from '../components/Badge';
 import { Modal } from '../components/Modal';
 import { Spinner } from '../components/Spinner';
 import { UserAvatar } from '../components/UserAvatar';
 import { CountdownTimer } from '../components/CountdownTimer';
-import type { AdminStats, SmtpConfig, TempConversation, TempMessage, User } from '../types';
+import type { AdminStats, AiConfig, SmtpConfig, TempConversation, TempMessage, User } from '../types';
 import { formatBytes, formatTime, prettyError } from '../utils/format';
 
-type Tab = 'users' | 'stats' | 'smtp' | 'temp';
+type Tab = 'users' | 'stats' | 'smtp' | 'temp' | 'ai';
+
+const AI_PRESETS: Record<string, { baseUrl: string; model: string; name: string }> = {
+  qwen: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo', name: '千问' },
+  doubao: { baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-1-5-pro-32k', name: '豆包' },
+  deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', name: 'DeepSeek' },
+  zhipu: { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash', name: '智谱' },
+  custom: { baseUrl: '', model: '', name: '自定义' },
+};
 
 export function AdminPanel() {
   const { user, logout } = useAuth();
@@ -57,6 +65,9 @@ export function AdminPanel() {
           <button className={tab === 'temp' ? 'active' : ''} onClick={() => setTab('temp')}>
             临时对话
           </button>
+          <button className={tab === 'ai' ? 'active' : ''} onClick={() => setTab('ai')}>
+            AI 配置
+          </button>
         </nav>
         <div className="admin-user">
           <UserAvatar name={user.username} size={36} />
@@ -80,6 +91,7 @@ export function AdminPanel() {
         {tab === 'stats' && <StatsTab />}
         {tab === 'smtp' && <SmtpTab />}
         {tab === 'temp' && <TempTab />}
+        {tab === 'ai' && <AiConfigsTab />}
       </main>
     </div>
   );
@@ -470,6 +482,258 @@ function TempTab() {
             </div>
           </div>
         )}
+      </Modal>
+    </section>
+  );
+}
+
+interface AiFormState {
+  provider: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  isActive: boolean;
+}
+
+const EMPTY_FORM: AiFormState = {
+  provider: 'qwen',
+  name: '',
+  baseUrl: AI_PRESETS.qwen.baseUrl,
+  apiKey: '',
+  model: AI_PRESETS.qwen.model,
+  isActive: true,
+};
+
+function maskKey(key?: string): string {
+  if (!key) return '—';
+  if (key.length <= 8) return '••••';
+  return `${key.slice(0, 4)}••••${key.slice(-4)}`;
+}
+
+function AiConfigsTab() {
+  const [list, setList] = useState<AiConfig[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [editing, setEditing] = useState<AiConfig | null>(null);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<AiFormState>(EMPTY_FORM);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr('');
+    try {
+      setList(await adminApi.listAiConfigs());
+    } catch (e) {
+      setErr(prettyError(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const pickPreset = (provider: string) => {
+    const p = AI_PRESETS[provider] || AI_PRESETS.custom;
+    setForm((f) => ({
+      ...f,
+      provider,
+      baseUrl: p.baseUrl || f.baseUrl,
+      model: p.model || f.model,
+      name: f.name || p.name,
+    }));
+  };
+
+  const openAdd = () => {
+    setEditing(null);
+    setForm({ ...EMPTY_FORM, name: AI_PRESETS.qwen.name });
+    setOpen(true);
+  };
+
+  const openEdit = (c: AiConfig) => {
+    setEditing(c);
+    setForm({
+      provider: c.provider,
+      name: c.name,
+      baseUrl: c.baseUrl,
+      apiKey: '',
+      model: c.model,
+      isActive: c.isActive,
+    });
+    setOpen(true);
+  };
+
+  const save = async () => {
+    if (!form.name.trim() || !form.baseUrl.trim() || !form.model.trim()) {
+      setErr('请填写名称、Base URL 和模型');
+      return;
+    }
+    setBusy(true);
+    setErr('');
+    try {
+      const payload: AiConfigPayload = {
+        provider: form.provider,
+        name: form.name.trim(),
+        baseUrl: form.baseUrl.trim(),
+        model: form.model.trim(),
+        isActive: form.isActive,
+      };
+      if (form.apiKey.trim()) payload.apiKey = form.apiKey.trim();
+      if (editing) {
+        await adminApi.updateAiConfig(editing.id, payload);
+      } else {
+        await adminApi.createAiConfig(payload);
+      }
+      setOpen(false);
+      await load();
+    } catch (e) {
+      setErr(prettyError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleActive = async (c: AiConfig) => {
+    try {
+      await adminApi.updateAiConfig(c.id, { isActive: !c.isActive });
+      await load();
+    } catch (e) {
+      setErr(prettyError(e));
+    }
+  };
+
+  const remove = async (c: AiConfig) => {
+    if (!confirm(`确定删除 AI 配置「${c.name}」？`)) return;
+    try {
+      await adminApi.deleteAiConfig(c.id);
+      await load();
+    } catch (e) {
+      setErr(prettyError(e));
+    }
+  };
+
+  return (
+    <section>
+      <div className="admin-toolbar">
+        <h2>AI 配置</h2>
+        <button className="btn btn-primary" onClick={openAdd}>
+          + 添加配置
+        </button>
+      </div>
+      {err && <div className="inline-msg err">{err}</div>}
+      {loading ? (
+        <div className="empty-list">
+          <Spinner />
+        </div>
+      ) : list.length === 0 ? (
+        <div className="empty-list">尚未配置任何 AI 提供商</div>
+      ) : (
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>Provider</th>
+              <th>模型</th>
+              <th>API Key</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((c) => (
+              <tr key={c.id}>
+                <td>{c.name}</td>
+                <td>{c.provider}</td>
+                <td>{c.model}</td>
+                <td className="muted">{maskKey(c.apiKey)}</td>
+                <td>
+                  {c.isActive ? <Badge variant="online">启用</Badge> : <Badge>禁用</Badge>}
+                </td>
+                <td>
+                  <div className="group-file-actions">
+                    <button className="btn btn-ghost btn-sm" onClick={() => openEdit(c)}>
+                      编辑
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => toggleActive(c)}
+                    >
+                      {c.isActive ? '禁用' : '启用'}
+                    </button>
+                    <button className="btn btn-danger btn-sm" onClick={() => remove(c)}>
+                      删除
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <Modal
+        open={open}
+        title={editing ? '编辑 AI 配置' : '添加 AI 配置'}
+        onClose={() => setOpen(false)}
+        footer={
+          <>
+            <button className="btn btn-ghost" onClick={() => setOpen(false)}>
+              取消
+            </button>
+            <button className="btn btn-primary" onClick={save} disabled={busy}>
+              {busy ? <Spinner size={14} /> : null}
+              保存
+            </button>
+          </>
+        }
+      >
+        <div className="form">
+          <label>
+            提供商
+            <select
+              value={form.provider}
+              onChange={(e) => pickPreset(e.target.value)}
+            >
+              <option value="qwen">千问 (Qwen)</option>
+              <option value="doubao">豆包 (Doubao)</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="zhipu">智谱 (GLM)</option>
+              <option value="custom">自定义</option>
+            </select>
+          </label>
+          <label>
+            名称
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </label>
+          <label>
+            Base URL
+            <input value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} />
+          </label>
+          <label>
+            API Key {editing && <span className="muted">（留空则不修改）</span>}
+            <input
+              type="password"
+              value={form.apiKey}
+              onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+              placeholder={editing ? '保留原有 Key' : 'sk-...'}
+            />
+          </label>
+          <label>
+            模型
+            <input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} />
+          </label>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={form.isActive}
+              onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
+            />
+            启用该配置
+          </label>
+        </div>
       </Modal>
     </section>
   );

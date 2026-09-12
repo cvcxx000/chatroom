@@ -40,6 +40,21 @@ async function init() {
     console.warn('[init] 管理员创建:', err.message);
   }
   
+  // 创建内置 AI 助手用户（AI 消息的发送者）
+  try {
+    const bcrypt = require('bcryptjs');
+    const aiHash = bcrypt.hashSync(Math.random().toString(36).slice(2) + Date.now().toString(36), 10);
+    await pg.query(
+      `INSERT INTO users (username, email, password_hash, display_name, is_admin, is_verified)
+       VALUES ($1, $2, $3, $4, false, true)
+       ON CONFLICT (username) DO NOTHING`,
+      ['ai_assistant', null, aiHash, 'AI 助手']
+    );
+    console.log('[init] AI 助手用户已创建: ai_assistant');
+  } catch (err: any) {
+    console.warn('[init] AI 助手创建:', err.message);
+  }
+  
   console.log('[init] 数据库初始化完成！');
   await pg.close();
   process.exit(0);

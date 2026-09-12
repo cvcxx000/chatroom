@@ -1126,3 +1126,251 @@ a {
     box-shadow: -4px 0 18px rgba(0, 0, 0, 0.1);
   }
 }
+
+/* ---------- Form select ---------- */
+.form select,
+.admin-form select {
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  outline: none;
+}
+.form select:focus {
+  border-color: var(--primary);
+}
+
+/* ---------- Auth tabs ---------- */
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.auth-tabs button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 10px;
+  font-size: 14px;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+}
+.auth-tabs button.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+}
+
+/* ---------- QR login ---------- */
+.qr-login {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+.qr-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 32px 0;
+  color: var(--text-muted);
+}
+.qr-placeholder.expired {
+  color: var(--warn);
+}
+.qr-image-wrap {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+.qr-image {
+  width: 220px;
+  height: 220px;
+  display: block;
+}
+.qr-hint {
+  text-align: center;
+}
+
+/* ---------- Share join ---------- */
+.share-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 0 4px;
+  text-align: center;
+}
+.share-info-icon {
+  font-size: 40px;
+}
+.share-info-name {
+  font-size: 18px;
+  font-weight: 600;
+}
+.share-block {
+  margin-bottom: 12px;
+}
+
+/* ---------- Toast ---------- */
+.toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(31, 36, 48, 0.92);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  z-index: 200;
+  box-shadow: var(--shadow);
+  animation: toast-in 0.2s ease;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, -8px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* ---------- Friend toolbar ---------- */
+.friend-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 12px 0;
+}
+
+/* ---------- AI ---------- */
+.ai-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6d8bff, #9b6dff);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+.user-avatar.ai-bot {
+  background: linear-gradient(135deg, #6d8bff, #9b6dff);
+  font-size: 18px;
+}
+.msg-row.ai-msg .bubble {
+  background: #f3f0ff;
+}
+.ai-tag {
+  display: inline-block;
+  background: #e8e0ff;
+  color: #6d3bf5;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+}
+.radio-row {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  color: var(--text);
+  font-size: 14px;
+}
+.chat-back {
+  font-size: 20px;
+  margin-right: -4px;
+}
+
+/* ---------- Mobile (max-width: 768px) ---------- */
+@media (max-width: 768px) {
+  .chat-app {
+    grid-template-columns: 1fr;
+    height: 100vh;
+  }
+  .sidebar {
+    width: 100%;
+    border-right: none;
+  }
+  .chat-main {
+    width: 100%;
+  }
+  /* When a conversation is active on mobile, hide sidebar and show chat */
+  .chat-app.chat-view .sidebar {
+    display: none;
+  }
+  .chat-app:not(.chat-view) .chat-main {
+    display: none;
+  }
+  .right-panel {
+    position: fixed;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 100%;
+    max-width: 100vw;
+    z-index: 40;
+    height: 100vh;
+  }
+  .chat-header {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .message-list {
+    padding: 12px 10px;
+  }
+  .msg-row {
+    max-width: 88%;
+  }
+  .msg-input {
+    padding: 8px 10px;
+  }
+  .msg-input-textarea {
+    font-size: 15px;
+  }
+  .btn {
+    font-size: 14px;
+  }
+  .sidebar-tabs button {
+    font-size: 14px;
+  }
+  .auth-card {
+    width: 90%;
+    max-width: 420px;
+    padding: 24px 20px;
+  }
+  .qr-image {
+    width: 200px;
+    height: 200px;
+  }
+  /* Admin panel */
+  .admin-page {
+    grid-template-columns: 1fr;
+  }
+  .admin-sidebar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 10px;
+  }
+  .admin-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .admin-main {
+    padding: 14px;
+  }
+  .admin-table {
+    display: block;
+    overflow-x: auto;
+  }
+  .sidebar-profile {
+    padding: 10px 12px;
+  }
+  .modal {
+    width: 92vw;
+  }
+}

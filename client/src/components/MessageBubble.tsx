@@ -13,6 +13,7 @@ interface BaseProps {
   createdAt: string;
   isTemp?: boolean;
   expiresAt?: string;
+  isAi?: boolean;
 }
 
 interface MsgProps extends BaseProps {
@@ -48,7 +49,7 @@ function resolveFields(props: Props) {
 }
 
 export function MessageBubble(props: Props) {
-  const { isMine, senderName, senderAvatar, showSender, createdAt, isTemp, expiresAt } = props;
+  const { isMine, senderName, senderAvatar, showSender, createdAt, isTemp, expiresAt, isAi } = props;
   const f = resolveFields(props);
   const [previewOpen, setPreviewOpen] = useState(false);
 
@@ -56,17 +57,29 @@ export function MessageBubble(props: Props) {
     'msg-row',
     isMine ? 'mine' : 'theirs',
     isTemp ? 'temp' : '',
+    isAi ? 'ai-msg' : '',
   ].join(' ');
 
   return (
     <div className={cls}>
       {!isMine && (
         <div className="msg-avatar">
-          <UserAvatar name={senderName || '?'} src={senderAvatar} size={36} />
+          {isAi ? (
+            <div className="user-avatar ai-bot" style={{ width: 36, height: 36 }}>
+              🤖
+            </div>
+          ) : (
+            <UserAvatar name={senderName || '?'} src={senderAvatar} size={36} />
+          )}
         </div>
       )}
       <div className="msg-body">
-        {showSender && !isMine && senderName && (
+        {isAi && (
+          <div className="msg-sender">
+            <span className="ai-tag">AI</span>
+          </div>
+        )}
+        {showSender && !isMine && !isAi && senderName && (
           <div className="msg-sender">{senderName}</div>
         )}
         <div className={`bubble ${f.messageType !== 'text' ? 'bubble-file' : ''}`}>

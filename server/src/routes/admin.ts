@@ -18,6 +18,13 @@ import {
   sendMail,
   isSmtpConfigured,
 } from '../services/email';
+import {
+  listAiConfigs,
+  createAiConfig,
+  getAiConfigById,
+  updateAiConfig,
+  deleteAiConfig,
+} from '../models/aiConfigModel';
 import { listActiveTemp, getTempMessages } from '../temp/store';
 import { env } from '../config/env';
 
@@ -138,6 +145,71 @@ router.get('/temp-conversations/:id', async (req: AuthedRequest, res: Response) 
   console.log(`[admin] temp-conversation ${req.params.id} viewed by admin ${req.user!.username} (${req.user!.id})`);
   const messages = getTempMessages(req.params.id);
   return ok(res, { tempId: req.params.id, messages });
+});
+
+/** Mask an API key: show first 4 and last 4 chars only. */
+function maskApiKey(key: string): string {
+  if (!key) return '';
+  if (key.length <= 8) return '*'.repeat(key.length);
+  return `${key.slice(0, 4)}${'*'.repeat(Math.max(4, key.length - 8))}${key.slice(-4)}`;
+}
+
+/** GET /api/admin/ai-configs */
+router.get('/ai-configs', async (_req: AuthedRequest, res: Response) => {
+  const configs = await listAiConfigs();
+  return ok(
+    res,
+    configs.map((c) => ({
+      id: c.id,
+      provider: c.provider,
+      name: c.name,
+      baseUrl: c.base_url,
+      apiKey: maskApiKey(c.api_key),
+      model: c.model,
+      isActive: c.is_active,
+      createdAt: c.created_at,
+    })),
+  );
+});
+
+/** POST /api/admin/ai-configs */
+router.post('/ai-configs', async (req: AuthedRequest, res: Response) => {
+  const { provider, name, baseUrl, apiKey, model, isActive } = req.body || {};
+  if (!provider || !name || !baseUrl || !apiKey || !model) {
+    return fail(res, 400, 'provider, name, baseUrl, apiKey and model are required', 'BAD_REQUEST');
+  }
+  const cfg = await createAiConfig({
+    provider: String(provider),
+    name: String(name),
+    baseUrl: String(baseUrl),
+    apiKey: String(apiKey),
+    model: String(model),
+    isActive: isActive !== false,
+  });
+  return ok(res, { id: cfg.id });
+});
+
+/** PUT /api/admin/ai-configs/:id */
+router.put('/ai-configs/:id', async (req: AuthedRequest, res: Response) => {
+  const existing = await getAiConfigById(req.params.id);
+  if (!existing) return fail(res, 404, 'ai config not found', 'NOT_FOUND');
+  const { provider, name, baseUrl, apiKey, model, isActive } = req.body || {};
+  const updated = await updateAiConfig(req.params.id, {
+    provider: provider !== undefined ? String(provider) : undefined,
+    name: name !== undefined ? String(name) : undefined,
+    baseUrl: baseUrl !== undefined ? String(baseUrl) : undefined,
+    // Empty apiKey means "leave it unchanged".
+    apiKey: apiKey === '' || apiKey === undefined ? undefined : String(apiKey),
+    model: model !== undefined ? String(model) : undefined,
+    isActive: isActive !== undefined ? isActive === true || isActive === 'true' : undefined,
+  });
+  return ok(res, { ok: true, id: updated?.id });
+});
+
+/** DELETE /api/admin/ai-configs/:id */
+router.delete('/ai-configs/:id', async (req: AuthedRequest, res: Response) => {
+  await deleteAiConfig(req.params.id);
+  return ok(res, { ok: true });
 });
 
 export default router;

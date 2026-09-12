@@ -7,8 +7,10 @@ import { AdminLogin } from './pages/AdminLogin';
 import { AdminPanel } from './pages/AdminPanel';
 import { Login } from './pages/Login';
 import { MainChat } from './pages/MainChat';
+import { QrConfirm } from './pages/QrConfirm';
 import { Register } from './pages/Register';
 import { SetupWizard } from './pages/SetupWizard';
+import { ShareJoin } from './pages/ShareJoin';
 import { Spinner } from './components/Spinner';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -92,6 +94,8 @@ function AppRoutes() {
       <Route path="/setup" element={<SetupGate><SetupWizard /></SetupGate>} />
       <Route path="/login" element={<SetupGate><RequireGuest><Login /></RequireGuest></SetupGate>} />
       <Route path="/register" element={<SetupGate><RequireGuest><Register /></RequireGuest></SetupGate>} />
+      <Route path="/share/:token" element={<SetupGate><ShareJoin /></SetupGate>} />
+      <Route path="/qr-confirm" element={<SetupGate><QrConfirm /></SetupGate>} />
       <Route path="/admin/login" element={<SetupGate><RequireGuest><AdminLogin /></RequireGuest></SetupGate>} />
       <Route
         path="/admin"

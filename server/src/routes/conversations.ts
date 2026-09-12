@@ -22,6 +22,8 @@ import {
 import {
   createMessage,
   listMessagesBefore,
+  listRecentMessages,
+  updateMessageContent,
 } from '../models/messageModel';
 import {
   createGroupFile,
@@ -29,6 +31,13 @@ import {
 } from '../models/groupFileModel';
 import { findUserById, toSafeUser } from '../models/userModel';
 import { broadcastToConversation } from '../websocket/hub';
+import { Conversation, Message } from '../models/types';
+import {
+  ensureAiAssistantUser,
+  getActiveAiConfig,
+  callAiStream,
+  ChatMessage,
+} from '../services/ai';
 
 const router = Router();
 
@@ -47,6 +56,114 @@ const upload = multer({
   storage,
   limits: { fileSize: env.MAX_FILE_SIZE_MB * 1024 * 1024 },
 });
+
+/**
+ * Build the prompt history and stream an AI reply into the conversation.
+ * Runs in the background; never throws into the request path.
+ */
+async function triggerAiReply(conv: Conversation): Promise<void> {
+  let placeholder: Message | null = null;
+  try {
+    const bot = await ensureAiAssistantUser();
+    const botSafe = toSafeUser(bot);
+
+    const history = await listRecentMessages(conv.id, 20);
+    const messages: ChatMessage[] = history
+      .filter((m) => m.content && m.content.trim().length > 0)
+      .map((m) => ({
+        role: m.sender_id === bot.id ? 'assistant' : 'user',
+        content: m.content as string,
+      }));
+    messages.unshift({
+      role: 'system',
+      content: '你是一个友好、简洁的聊天助手，用中文回答用户的问题。',
+    });
+
+    const config = await getActiveAiConfig();
+    if (!config) {
+      const aiMsg = await createMessage({
+        conversationId: conv.id,
+        senderId: bot.id,
+        content: '未配置 AI API Key，请联系管理员在后台配置。',
+        messageType: 'text',
+      });
+      await broadcastToConversation(conv.id, {
+        type: 'new_message',
+        conversationId: conv.id,
+        message: { ...aiMsg, sender: botSafe },
+      });
+      return;
+    }
+
+    // Placeholder message; deltas stream in, final content persisted on done.
+    placeholder = await createMessage({
+      conversationId: conv.id,
+      senderId: bot.id,
+      content: '',
+      messageType: 'text',
+    });
+    const ph = placeholder;
+    await broadcastToConversation(conv.id, {
+      type: 'ai_stream',
+      conversationId: conv.id,
+      messageId: ph.id,
+      delta: '',
+      sender: botSafe,
+    });
+
+    await callAiStream(
+      config,
+      messages,
+      (delta) => {
+        broadcastToConversation(conv.id, {
+          type: 'ai_stream',
+          conversationId: conv.id,
+          messageId: ph.id,
+          delta,
+        });
+      },
+      async (finalText) => {
+        try {
+          const text = finalText || '（无回复内容）';
+          const saved = await updateMessageContent(ph.id, text);
+          await broadcastToConversation(conv.id, {
+            type: 'ai_stream',
+            conversationId: conv.id,
+            messageId: ph.id,
+            done: true,
+            message: saved || ph,
+          });
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error('[ai] finalize failed', e);
+        }
+      },
+    );
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[ai] reply failed', e);
+    // Surface a friendly error in the placeholder message instead of leaving it empty.
+    if (placeholder) {
+      try {
+        const saved = await updateMessageContent(
+          placeholder.id,
+          'AI 服务暂时不可用，请稍后重试或联系管理员。',
+        );
+        await broadcastToConversation(conv.id, {
+          type: 'ai_stream',
+          conversationId: conv.id,
+          messageId: placeholder.id,
+          done: true,
+          error: true,
+          message: saved || placeholder,
+        });
+      } catch (e2) {
+        // eslint-disable-next-line no-console
+        console.error('[ai] error fallback failed', e2);
+      }
+    }
+  }
+}
 
 /** GET /api/conversations */
 router.get('/', async (req: AuthedRequest, res: Response) => {
@@ -198,6 +315,19 @@ router.post('/:id/messages', async (req: AuthedRequest, res: Response) => {
     conversationId: conv.id,
     message: { ...msg, sender: toSafeUser(req.user!) },
   });
+
+  // Trigger an AI reply for AI conversations, or when a group mentions @AI.
+  const text = typeof content === 'string' ? content : '';
+  const mentionedAi = /@ai\b/i.test(text.trim());
+  const shouldReply =
+    mt === 'text' &&
+    text.trim().length > 0 &&
+    (conv.type === 'ai' || (conv.type === 'group' && mentionedAi));
+  if (shouldReply) {
+    // Fire-and-forget; the HTTP response returns immediately.
+    void triggerAiReply(conv);
+  }
+
   return ok(res, msg);
 });
 

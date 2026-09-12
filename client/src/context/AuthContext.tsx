@@ -21,6 +21,7 @@ interface AuthState {
   isAdmin: boolean;
   login: (username: string, password: string) => Promise<User>;
   adminLogin: (username: string, password: string) => Promise<User>;
+  loginWithToken: (token: string, user: User) => Promise<User>;
   register: (payload: {
     username: string;
     email: string;
@@ -96,6 +97,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [persist],
   );
 
+  const loginWithToken = useCallback(
+    async (token: string, user: User) => {
+      persist(token, user);
+      return normalizeUser(user);
+    },
+    [persist],
+  );
+
   const register = useCallback(
     async (payload: { username: string; email: string; password: string; displayName?: string }) => {
       const { token, user } = await authApi.register(payload);
@@ -161,11 +170,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAdmin: Boolean(user?.isAdmin),
       login,
       adminLogin,
+      loginWithToken,
       register,
       logout,
       refreshMe,
     }),
-    [user, token, loading, login, adminLogin, register, logout, refreshMe],
+    [user, token, loading, login, adminLogin, loginWithToken, register, logout, refreshMe],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -106,3 +106,50 @@ CREATE TABLE IF NOT EXISTS system_config (
     value     TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ============================================================
+-- shared_links
+-- ============================================================
+CREATE TABLE IF NOT EXISTS shared_links (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    token         VARCHAR(64) UNIQUE NOT NULL,
+    expires_at    TIMESTAMPTZ NOT NULL,
+    password_hash VARCHAR(255),
+    created_by    UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_shared_links_token ON shared_links(token);
+CREATE INDEX IF NOT EXISTS idx_shared_links_conv ON shared_links(conversation_id);
+
+-- ============================================================
+-- qr_sessions
+-- ============================================================
+CREATE TABLE IF NOT EXISTS qr_sessions (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token      VARCHAR(64) UNIQUE NOT NULL,
+    user_id    UUID REFERENCES users(id) ON DELETE CASCADE,
+    status     VARCHAR(20) NOT NULL DEFAULT 'pending',
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (status IN ('pending','scanned','confirmed','expired'))
+);
+CREATE INDEX IF NOT EXISTS idx_qr_sessions_token ON qr_sessions(token);
+
+-- ============================================================
+-- ai_configs
+-- ============================================================
+CREATE TABLE IF NOT EXISTS ai_configs (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider   VARCHAR(50) NOT NULL,
+    name       VARCHAR(100) NOT NULL,
+    base_url   TEXT NOT NULL,
+    api_key    TEXT NOT NULL,
+    model      VARCHAR(100) NOT NULL,
+    is_active  BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Allow 'ai' conversation type (existing table).
+ALTER TABLE conversations DROP CONSTRAINT IF EXISTS conversations_type_check;
+ALTER TABLE conversations ADD CONSTRAINT conversations_type_check CHECK (type IN ('private','group','ai'));

@@ -18,6 +18,9 @@ import conversationRoutes from './routes/conversations';
 import fileRoutes from './routes/files';
 import tempRoutes from './routes/temp';
 import adminRoutes from './routes/admin';
+import shareRoutes from './routes/share';
+import qrRoutes from './routes/qr';
+import aiRoutes from './routes/ai';
 
 const app = express();
 const server = http.createServer(app);
@@ -53,6 +56,9 @@ app.use('/api/conversations', requireAuth, conversationRoutes);
 app.use('/api/files', requireAuth, fileRoutes);
 app.use('/api/temp', requireAuth, tempRoutes);
 app.use('/api/admin', requireAuth, requireAdmin, adminRoutes);
+app.use('/api/share', shareRoutes);
+app.use('/api/qr', qrRoutes);
+app.use('/api/ai', requireAuth, aiRoutes);
 
 app.get('/health', (_req, res) => {
   res.json({ success: true, data: { status: 'ok', uptime: process.uptime() } });
