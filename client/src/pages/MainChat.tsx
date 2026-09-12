@@ -36,6 +36,28 @@ import { formatBytes, formatDateSeparator, formatTime, isSameDay, prettyError } 
 
 type SidebarTab = 'chats' | 'friends' | 'temp';
 
+/**
+ * 服务端（pglite 直查）返回的消息行是 snake_case，前端类型/渲染用 camelCase。
+ * 这里统一归一化，避免 createdAt / senderId / messageType 为 undefined。
+ */
+function normalizeMessage(raw: any): Message {
+  if (!raw) return raw as Message;
+  return {
+    ...raw,
+    id: raw.id,
+    conversationId: raw.conversationId ?? raw.conversation_id,
+    senderId: raw.senderId ?? raw.sender_id,
+    sender: raw.sender,
+    content: raw.content ?? '',
+    messageType: raw.messageType ?? raw.message_type ?? 'text',
+    fileUrl: raw.fileUrl ?? raw.file_url ?? null,
+    fileName: raw.fileName ?? raw.file_name ?? null,
+    fileSize: raw.fileSize ?? raw.file_size ?? null,
+    createdAt: raw.createdAt ?? raw.created_at,
+    isAi: raw.isAi ?? raw.is_ai,
+  };
+}
+
 interface ActiveTemp {
   tempId: string;
   otherUser: User;
@@ -171,16 +193,19 @@ export function MainChat() {
   useEffect(() => {
     if (!myId) return;
     const offNew = socket.on('new_message', (p: any) => {
-      const msg: Message = p.message;
+      const msg: Message = normalizeMessage(p.message);
       const convId: string = p.conversationId || msg.conversationId || msg.conversation_id;
-      setMessages((prev) => {
-        // dedupe by id
-        if (prev.some((m) => m.id === msg.id)) return prev;
-        return [...prev, msg];
-      });
+      // 始终更新会话列表的最后一条预览
       setConversations((prev) =>
         prev.map((c) => (c.id === convId ? { ...c, lastMessage: msg } : c)),
       );
+      // 只有消息属于当前打开的会话时才追加进消息列表，避免串台
+      if (convId && convId !== activeConvIdRef.current) return;
+      setMessages((prev) => {
+        // dedupe by id（乐观插入与 WS 回显可能同一条）
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
     });
     const offTyping = socket.on('user_typing', (p: any) => {
       const convId: string = p.conversationId;
@@ -272,7 +297,9 @@ export function MainChat() {
       socket.joinConversation(c.id);
       try {
         const msgs = await conversationsApi.messages(c.id, { limit: 100 });
-        setMessages(msgs);
+        // 服务端返回 newest-first（DESC），这里翻转为 oldest -> newest，
+        // 并归一化 snake_case 字段，保证 createdAt / senderId 可用。
+        setMessages(msgs.map(normalizeMessage).reverse());
       } catch {
         /* ignore */
       } finally {
@@ -297,14 +324,39 @@ export function MainChat() {
     msgEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, activeConv?.id, activeTemp?.tempId]);
 
+  // ---------- append a message to the currently open conversation (optimistic) ----------
+  const appendToActive = useCallback(
+    (convId: string, raw: any) => {
+      const msg = normalizeMessage(raw);
+      // 仅当用户仍停留在该会话时才写入消息列表
+      if (activeConvIdRef.current !== convId) return;
+      setMessages((prev) =>
+        prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
+      );
+      setConversations((prev) =>
+        prev.map((c) => (c.id === convId ? { ...c, lastMessage: msg } : c)),
+      );
+    },
+    [],
+  );
+
   // ---------- sending text message ----------
   const sendText = useCallback(
     async (text: string) => {
       if (activeConv) {
         try {
-          await conversationsApi.sendMessage(activeConv.id, {
+          const sent = await conversationsApi.sendMessage(activeConv.id, {
             content: text,
             messageType: 'text',
+          });
+          // 乐观更新：立即把自己发的消息渲染出来，不等 WS 回显
+          appendToActive(activeConv.id, {
+            ...sent,
+            sender: {
+              id: myId,
+              username: user?.username,
+              displayName: user?.displayName ?? user?.display_name,
+            },
           });
         } catch (e) {
           alert(prettyError(e));
@@ -321,7 +373,7 @@ export function MainChat() {
         }
       }
     },
-    [activeConv, activeTemp, socket],
+    [activeConv, activeTemp, socket, appendToActive, myId, user],
   );
 
   const sendAttachment = useCallback(
@@ -338,18 +390,27 @@ export function MainChat() {
         if (!upload.ok) throw new Error('上传失败');
         const body = await upload.json();
         const data = body?.data ?? body;
-        await conversationsApi.sendMessage(activeConv.id, {
+        const sent = await conversationsApi.sendMessage(activeConv.id, {
           content: asImage ? file.name : '',
           messageType: asImage ? 'image' : 'file',
           fileUrl: data.fileUrl ?? data.file_url,
           fileName: data.fileName ?? data.file_name ?? file.name,
           fileSize: data.fileSize ?? data.file_size ?? file.size,
         });
+        // 乐观更新附件消息
+        appendToActive(activeConv.id, {
+          ...sent,
+          sender: {
+            id: myId,
+            username: user?.username,
+            displayName: user?.displayName ?? user?.display_name,
+          },
+        });
       } catch (e) {
         alert(prettyError(e));
       }
     },
-    [activeConv],
+    [activeConv, appendToActive, myId, user],
   );
 
   // ---------- friends ----------

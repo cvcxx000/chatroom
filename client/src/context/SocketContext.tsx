@@ -119,10 +119,32 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     };
   }, [dispatch]);
 
+  // 监听 localStorage 中的 token：登录后 token 才写入，此时需要补建 WS 连接；
+  // 登出后 token 清空，关闭连接。
+  const [token, setToken] = useState<string | null>(() => getToken());
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const t = getToken();
+      setToken((prev) => (prev === t ? prev : t));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     shouldReconnectRef.current = true;
-    connect();
+    if (token) {
+      connect();
+    } else if (socketRef.current) {
+      try {
+        socketRef.current.close();
+      } catch {
+        /* noop */
+      }
+      socketRef.current = null;
+      setConnected(false);
+      setConnecting(false);
+    }
     return () => {
       mountedRef.current = false;
       shouldReconnectRef.current = false;
@@ -136,7 +158,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         socketRef.current = null;
       }
     };
-  }, [connect]);
+  }, [token, connect]);
 
   const send = useCallback((msg: WsClientMessage): boolean => {
     const ws = socketRef.current;
