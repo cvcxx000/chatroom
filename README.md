@@ -13,7 +13,7 @@
 
 **实时同步 · 端到端体验 · 私有化部署 · 完全开源**
 
-[功能特性](#-核心特性) • [快速开始](#-快速开始) • [部署指南](#-部署指南) • [API 文档](./API_SPEC.md)
+[功能特性](#-核心特性) • [快速开始](#-快速开始) • [部署指南](#-部署指南) • [AI 配置](#-ai-配置指南) • [API 文档](./API_SPEC.md)
 
 </div>
 
@@ -80,6 +80,8 @@
 - **封禁系统**：被封禁用户无法登录、无法发送消息
 - **系统监控**：实时查看在线人数、消息量、系统状态
 - **邮箱配置**：可视化配置 SMTP 邮件服务
+- **AI 配置**：管理多个 AI 提供商的 API Key，支持千问、豆包、DeepSeek、智谱及自定义模型
+- **临时对话监控**：管理员授权后可查看活跃临时对话
 - **操作日志**：记录管理员所有操作
 
 ### 6. 📧 邮件通知系统
@@ -101,7 +103,55 @@
 
 整个过程不到 2 分钟，即使是非技术用户也能轻松完成部署。
 
-### 8. 🛡️ 安全与隐私
+### 8. 🔗 共享链接邀请
+
+用户可以为群聊生成**共享邀请链接**，其他人通过链接即可一键加入群聊，无需手动搜索添加。
+
+- 支持设置有效期（24 小时 / 72 小时 / 7 天）
+- 可选设置访问密码
+- 独立的公开加入页面，无需登录即可预览
+- 链接可随时撤销失效
+
+### 9. 📱 二维码扫码登录
+
+支持 PC 端显示二维码，手机端已登录用户扫码后确认即可完成 PC 端登录，无需输入账号密码。
+
+- 登录页双 Tab 切换：账号登录 / 扫码登录
+- 二维码实时生成，5 分钟有效期
+- PC 端轮询等待确认，扫码成功自动跳转
+- 用户端「扫一扫」入口，确认后即时登录
+
+### 10. 📱 移动端适配
+
+全面响应式设计，手机、平板、桌面端完美适配。
+
+- 768px 以下侧边栏全屏展示，点击会话进入聊天页
+- 聊天页带返回按钮，操作手势符合移动端习惯
+- 输入框、按钮、字体大小自适应
+- 管理员后台同步适配
+
+### 11. 🔔 好友请求实时通知
+
+好友请求通过 WebSocket 实时推送，不再需要手动刷新。
+
+- 收到好友请求时页面内弹出 Toast 通知
+- 好友标签页显示未读请求数量角标
+- 支持手动刷新按钮
+- 接受/拒绝后状态实时同步
+
+### 12. 🤖 AI 智能对话
+
+内置 AI 对话能力，管理员配置 API Key 后，用户可直接与 AI 私聊，也可在群聊中 @AI 获得回复。
+
+- **多提供商支持**：千问（通义千问）、豆包（字节）、DeepSeek、智谱（GLM）
+- **自定义模型**：支持填入任意 OpenAI 兼容接口的 base_url、模型名、API Key
+- **AI 私聊**：一键创建与 AI 的独立对话
+- **群聊 @AI**：在群聊中 @AI 机器人，AI 会针对上下文回复
+- **流式输出**：AI 回复逐字推送，体验流畅
+- **AI 消息标识**：机器人头像 + "AI" 标签，明确区分
+- **密钥安全**：API Key 仅存储于服务端，前端不可见
+
+### 13. 🛡️ 安全与隐私
 
 - JWT 身份认证，Token 过期自动刷新
 - bcrypt 密码加密存储
@@ -128,6 +178,8 @@
 | bcryptjs | 2.4 | 密码加密 |
 | Nodemailer | 6.x | 邮件发送 |
 | Multer | 1.4 | 文件上传 |
+| qrcode | 1.x | 二维码生成 |
+| OpenAI 兼容 API | - | AI 对话服务 |
 
 ### 前端技术栈
 
@@ -197,8 +249,9 @@ npm run dev
 ```
 
 启动后访问：
-- 前端界面：http://localhost:5173
-- 后端 API：http://localhost:3000
+- 应用界面：http://localhost:4000（前端构建后由后端统一托管）
+- 后端 API：http://localhost:4000
+- 开发模式前端：http://localhost:5173（需单独启动 `cd client && npm run dev`）
 - 首次访问会自动进入初始化向导
 
 ### 生产构建
@@ -258,6 +311,37 @@ EMAIL_PASS=your_password
 
 ---
 
+## 🤖 AI 配置指南
+
+管理员登录后台后，进入「AI 配置」页面，可添加多个 AI 提供商。系统采用 OpenAI 兼容接口，支持主流大模型平台。
+
+### 支持的提供商
+
+| 提供商 | 默认 base_url | 推荐模型 |
+|--------|--------------|----------|
+| 千问（通义千问） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | qwen-plus / qwen-turbo |
+| 豆包（字节） | `https://ark.cn-beijing.volces.com/api/v3` | doubao-pro / doubao-lite |
+| DeepSeek | `https://api.deepseek.com/v1` | deepseek-chat |
+| 智谱（GLM） | `https://open.bigmodel.cn/api/paas/v4` | glm-4 / glm-3-turbo |
+| 自定义 | 用户自行填写 | 任意 OpenAI 兼容模型 |
+
+### 配置步骤
+
+1. 以管理员身份登录，进入后台「AI 配置」
+2. 点击「新增配置」，选择提供商或选择「自定义」
+3. 填入 API Key、模型名称（自定义模式还需填写 base_url）
+4. 保存后启用该配置
+5. 用户端点击「+ AI 对话」即可选择已启用的 AI 开始对话
+
+### 注意事项
+
+- API Key 仅存储在服务端数据库，前端无法获取
+- 未配置任何 AI 时，用户发起 AI 对话会收到友好提示
+- 群聊中 @AI 时，AI 会读取最近的上下文消息进行回复
+- AI 回复采用流式输出，逐字推送到前端
+
+---
+
 ## 📁 项目结构
 
 ```
@@ -269,11 +353,12 @@ chatroom/
 │   │   ├── context/          # React Context
 │   │   ├── pages/            # 页面组件
 │   │   │   ├── SetupWizard.tsx    # 初始化向导
-│   │   │   ├── Login.tsx          # 用户登录
+│   │   │   ├── Login.tsx          # 用户登录（含扫码登录）
 │   │   │   ├── Register.tsx       # 用户注册
 │   │   │   ├── MainChat.tsx       # 主聊天界面
+│   │   │   ├── ShareJoin.tsx      # 共享链接加入页
 │   │   │   ├── AdminLogin.tsx     # 管理员登录
-│   │   │   └── AdminPanel.tsx     # 管理员后台
+│   │   │   └── AdminPanel.tsx     # 管理员后台（含 AI 配置）
 │   │   ├── styles/           # 样式文件
 │   │   ├── types/            # TypeScript 类型
 │   │   └── utils/            # 工具函数
@@ -292,8 +377,13 @@ chatroom/
 │   │   │   ├── files.ts          # 文件路由
 │   │   │   ├── temp.ts           # 临时对话路由
 │   │   │   ├── admin.ts          # 管理员路由
+│   │   │   ├── share.ts          # 共享链接路由
+│   │   │   ├── qrcode.ts         # 扫码登录路由
+│   │   │   ├── ai.ts             # AI 对话路由
 │   │   │   └── setup.ts          # 初始化路由
-│   │   ├── services/         # 业务服务（邮件等）
+│   │   ├── services/         # 业务服务（邮件、AI 等）
+│   │   │   ├── email.ts          # 邮件服务
+│   │   │   └── ai.ts             # AI 对话服务（OpenAI 兼容）
 │   │   ├── temp/             # 临时对话内存存储
 │   │   ├── utils/            # 工具函数
 │   │   ├── websocket/        # WebSocket 服务
@@ -319,19 +409,42 @@ chatroom/
 |------|------|------|
 | 认证 | `POST /api/auth/register` | 用户注册 |
 | 认证 | `POST /api/auth/login` | 用户登录 |
+| 认证 | `POST /api/auth/admin-login` | 管理员登录 |
 | 用户 | `GET /api/users/me` | 获取当前用户 |
 | 用户 | `GET /api/users/search` | 搜索用户 |
 | 好友 | `GET /api/friends` | 获取好友列表 |
-| 好友 | `POST /api/friends` | 添加好友 |
+| 好友 | `GET /api/friends/requests` | 好友请求列表 |
+| 好友 | `POST /api/friends/request` | 发送好友请求 |
+| 好友 | `POST /api/friends/accept` | 接受好友请求 |
+| 好友 | `POST /api/friends/reject` | 拒绝好友请求 |
 | 会话 | `GET /api/conversations` | 获取会话列表 |
+| 会话 | `POST /api/conversations/private` | 创建私聊 |
+| 会话 | `POST /api/conversations/group` | 创建群聊 |
 | 消息 | `GET /api/conversations/:id/messages` | 获取历史消息 |
-| 群文件 | `GET /api/groups/:id/files` | 获取群文件 |
-| 群文件 | `POST /api/groups/:id/files` | 上传群文件 |
-| 临时对话 | `POST /api/temp/create` | 创建临时对话 |
-| 临时对话 | `POST /api/temp/:id/message` | 发送临时消息 |
-| 管理员 | `POST /api/admin/login` | 管理员登录 |
+| 消息 | `POST /api/conversations/:id/messages` | 发送消息 |
+| 群文件 | `GET /api/conversations/:id/files` | 获取群文件 |
+| 群文件 | `POST /api/conversations/:id/files` | 上传群文件 |
+| 临时对话 | `POST /api/temp/start` | 创建临时对话 |
+| 临时对话 | `POST /api/temp/:tempId/send` | 发送临时消息 |
+| 共享链接 | `POST /api/share/create` | 生成共享链接 |
+| 共享链接 | `GET /api/share/:token` | 获取共享链接信息 |
+| 共享链接 | `POST /api/share/:token/join` | 通过链接加入群聊 |
+| 扫码登录 | `POST /api/qrcode/create` | 生成扫码登录 Token |
+| 扫码登录 | `POST /api/qrcode/:token/confirm` | 手机端确认登录 |
+| 扫码登录 | `GET /api/qrcode/:token/status` | PC 端轮询登录状态 |
+| AI 对话 | `POST /api/ai/conversation` | 创建 AI 对话 |
+| AI 对话 | `POST /api/ai/:id/chat` | 发送 AI 消息（流式） |
+| AI 配置 | `GET /api/admin/ai-configs` | 获取 AI 配置列表 |
+| AI 配置 | `POST /api/admin/ai-configs` | 新增 AI 配置 |
+| AI 配置 | `PUT /api/admin/ai-configs/:id` | 更新 AI 配置 |
+| AI 配置 | `DELETE /api/admin/ai-configs/:id` | 删除 AI 配置 |
 | 管理员 | `GET /api/admin/users` | 用户列表 |
-| 管理员 | `POST /api/admin/users/:id/ban` | 封禁用户 |
+| 管理员 | `PUT /api/admin/users/:id/ban` | 封禁用户 |
+| 管理员 | `PUT /api/admin/users/:id/unban` | 解封用户 |
+| 管理员 | `GET /api/admin/stats` | 系统统计 |
+| 管理员 | `GET /api/admin/smtp` | 获取 SMTP 配置 |
+| 管理员 | `PUT /api/admin/smtp` | 更新 SMTP 配置 |
+| 管理员 | `GET /api/admin/temp-conversations` | 活跃临时对话 |
 | 初始化 | `POST /api/setup/init` | 系统初始化 |
 | 初始化 | `GET /api/setup/status` | 初始化状态 |
 
