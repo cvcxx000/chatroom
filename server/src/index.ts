@@ -21,6 +21,7 @@ import adminRoutes from './routes/admin';
 import shareRoutes from './routes/share';
 import qrRoutes from './routes/qr';
 import aiRoutes from './routes/ai';
+import terminalRoutes from './routes/terminal';
 
 const app = express();
 const server = http.createServer(app);
@@ -59,6 +60,7 @@ app.use('/api/admin', requireAuth, requireAdmin, adminRoutes);
 app.use('/api/share', shareRoutes);
 app.use('/api/qr', qrRoutes);
 app.use('/api/ai', requireAuth, aiRoutes);
+app.use('/api/terminal', requireAuth, terminalRoutes);
 
 app.get('/health', (_req, res) => {
   res.json({ success: true, data: { status: 'ok', uptime: process.uptime() } });

@@ -7,7 +7,9 @@ import { friendsApi } from '../api/friends';
 import { qrApi } from '../api/qr';
 import { shareApi } from '../api/share';
 import { tempApi } from '../api/temp';
+import { terminalApi } from '../api/terminal';
 import { usersApi } from '../api/users';
+import { ApiError } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import { Badge } from '../components/Badge';
@@ -20,6 +22,7 @@ import { MessageInput } from '../components/MessageInput';
 import { Modal } from '../components/Modal';
 import { Spinner } from '../components/Spinner';
 import { TypingIndicator } from '../components/TypingIndicator';
+import { TerminalPanel } from '../components/TerminalPanel';
 import { UserAvatar } from '../components/UserAvatar';
 import type {
   AiProvider,
@@ -115,6 +118,12 @@ export function MainChat() {
   const [aiSelected, setAiSelected] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [aiErr, setAiErr] = useState('');
+
+  // ---------- virtual terminal ----------
+  const [terminalContainerId, setTerminalContainerId] = useState<string | null>(null);
+  const [terminalStarting, setTerminalStarting] = useState(false);
+  const [terminalError, setTerminalError] = useState('');
+  const [viewMode, setViewMode] = useState<'chat' | 'terminal'>('chat');
 
   // ---------- toast ----------
   const [toast, setToast] = useState<string | null>(null);
@@ -287,6 +296,7 @@ export function MainChat() {
   // ---------- open conversation ----------
   const openConversation = useCallback(
     async (c: Conversation) => {
+      setViewMode('chat');
       setActiveConv(c);
       setActiveTemp(null);
       setRightPanel(c.type === 'group' ? 'info' : null);
@@ -600,6 +610,45 @@ export function MainChat() {
     }
   };
 
+  // ---------- virtual terminal ----------
+  const openTerminal = async () => {
+    if (terminalContainerId) {
+      setViewMode('terminal');
+      return;
+    }
+    setTerminalStarting(true);
+    setTerminalError('');
+    try {
+      const r = await terminalApi.startTerminal();
+      setTerminalContainerId(r.containerId);
+      setViewMode('terminal');
+    } catch (e) {
+      const err = e as ApiError;
+      if (err?.code === 'DOCKER_UNAVAILABLE' || err?.status === 503) {
+        setTerminalError('虚拟终端功能需要服务器安装 Docker，请联系管理员');
+      } else {
+        setTerminalError(prettyError(e));
+      }
+      setViewMode('terminal');
+    } finally {
+      setTerminalStarting(false);
+    }
+  };
+
+  const closeTerminal = useCallback(async () => {
+    const id = terminalContainerId;
+    setTerminalContainerId(null);
+    setTerminalError('');
+    setViewMode('chat');
+    if (id) {
+      try {
+        await terminalApi.stopTerminal(id);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [terminalContainerId]);
+
   // ---------- render helpers ----------
   const otherUserOf = (c: Conversation): User | undefined => {
     if (c.otherUser) return c.otherUser;
@@ -704,6 +753,14 @@ export function MainChat() {
               </button>
               <button className="btn btn-secondary btn-sm" onClick={openAiModal}>
                 🤖 + AI 对话
+              </button>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => void openTerminal()}
+                disabled={terminalStarting}
+              >
+                {terminalStarting ? <Spinner size={14} /> : null}
+                💻 终端
               </button>
             </div>
             <ConversationList
@@ -817,6 +874,7 @@ export function MainChat() {
                 key={t.tempId}
                 className={`conv-item temp-item ${activeTemp?.tempId === t.tempId ? 'active' : ''}`}
                 onClick={() => {
+                  setViewMode('chat');
                   setActiveTemp(t);
                   setActiveConv(null);
                   socket.tempJoin(t.tempId);
@@ -843,8 +901,31 @@ export function MainChat() {
       </aside>
 
       {/* MIDDLE COLUMN */}
-      <main className={`chat-main ${activeTemp ? 'temp-theme' : ''}`}>
-        {!activeConv && !activeTemp ? (
+      <main className={`chat-main ${activeTemp ? 'temp-theme' : ''} ${viewMode === 'terminal' ? 'terminal-theme' : ''}`}>
+        {viewMode === 'terminal' && terminalContainerId ? (
+          <TerminalPanel
+            containerId={terminalContainerId}
+            onClose={() => void closeTerminal()}
+            onError={(msg) => showToast(msg)}
+          />
+        ) : viewMode === 'terminal' && terminalError ? (
+          <div className="empty-chat">
+            <div className="terminal-unavailable-card">
+              <div className="terminal-unavailable-icon">💻</div>
+              <div className="terminal-unavailable-title">虚拟终端暂不可用</div>
+              <div className="muted">{terminalError}</div>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  setTerminalError('');
+                  setViewMode('chat');
+                }}
+              >
+                返回聊天
+              </button>
+            </div>
+          </div>
+        ) : !activeConv && !activeTemp ? (
           <div className="empty-chat">
             <div className="empty-chat-title">聊天文件室</div>
             <div className="muted">从左侧选择一个会话开始聊天</div>

@@ -19,6 +19,7 @@ import {
   setOnExpire,
 } from '../temp/store';
 import { AuthedClient } from './types';
+import { dockerService, AttachHandle } from '../services/docker';
 
 export function initWebsocket(httpServer: HttpServer): WebSocketServer {
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
@@ -32,6 +33,8 @@ export function initWebsocket(httpServer: HttpServer): WebSocketServer {
 
   wss.on('connection', (ws: WebSocket, req) => {
     let client: AuthedClient | null = null;
+    // Per-connection terminal sessions, indexed by containerId.
+    const terminalSessions = new Map<string, AttachHandle>();
 
     try {
       const url = new URL(req.url || '', 'http://localhost');
@@ -138,6 +141,64 @@ export function initWebsocket(httpServer: HttpServer): WebSocketServer {
             }
             break;
           }
+          case 'terminal': {
+            const containerId = String(msg.containerId || '');
+            if (!containerId) break;
+            if (!dockerService.available) {
+              ws.send(JSON.stringify({ type: 'terminal_error', containerId, error: 'Docker unavailable' }));
+              break;
+            }
+            // Verify the container belongs to this user.
+            const owner = await dockerService.getContainerOwner(containerId);
+            if (owner !== userId) {
+              ws.send(JSON.stringify({ type: 'terminal_error', containerId, error: 'forbidden' }));
+              break;
+            }
+            if (terminalSessions.has(containerId)) {
+              ws.send(JSON.stringify({ type: 'terminal_attached', containerId }));
+              break;
+            }
+            try {
+              const handle = await dockerService.attachContainer(
+                containerId,
+                (data: string) => {
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'terminal_output', containerId, data }));
+                  }
+                },
+                () => {
+                  terminalSessions.delete(containerId);
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'terminal_closed', containerId }));
+                  }
+                },
+              );
+              terminalSessions.set(containerId, handle);
+              ws.send(JSON.stringify({ type: 'terminal_attached', containerId }));
+            } catch (err: any) {
+              // eslint-disable-next-line no-console
+              console.error('[ws] terminal attach failed:', err);
+              ws.send(JSON.stringify({ type: 'terminal_error', containerId, error: 'attach failed' }));
+            }
+            break;
+          }
+          case 'terminal_input': {
+            const containerId = String(msg.containerId || '');
+            const data = String(msg.data || '');
+            const handle = terminalSessions.get(containerId);
+            if (!handle) break;
+            handle.write(data);
+            break;
+          }
+          case 'terminal_resize': {
+            const containerId = String(msg.containerId || '');
+            const cols = parseInt(String(msg.cols || '80'), 10);
+            const rows = parseInt(String(msg.rows || '24'), 10);
+            const handle = terminalSessions.get(containerId);
+            if (!handle) break;
+            handle.resize(cols, rows);
+            break;
+          }
           default:
             break;
         }
@@ -148,9 +209,26 @@ export function initWebsocket(httpServer: HttpServer): WebSocketServer {
     });
 
     ws.on('close', () => {
+      // Detach all terminal sessions (do NOT destroy the containers themselves).
+      for (const handle of terminalSessions.values()) {
+        try {
+          handle.destroy();
+        } catch {
+          /* ignore */
+        }
+      }
+      terminalSessions.clear();
       if (client && client.entry) removeClient(client.entry);
     });
     ws.on('error', () => {
+      for (const handle of terminalSessions.values()) {
+        try {
+          handle.destroy();
+        } catch {
+          /* ignore */
+        }
+      }
+      terminalSessions.clear();
       if (client && client.entry) removeClient(client.entry);
     });
   });

@@ -27,6 +27,7 @@ import {
 } from '../models/aiConfigModel';
 import { listActiveTemp, getTempMessages } from '../temp/store';
 import { env } from '../config/env';
+import { dockerService } from '../services/docker';
 
 const router = Router();
 
@@ -210,6 +211,112 @@ router.put('/ai-configs/:id', async (req: AuthedRequest, res: Response) => {
 router.delete('/ai-configs/:id', async (req: AuthedRequest, res: Response) => {
   await deleteAiConfig(req.params.id);
   return ok(res, { ok: true });
+});
+
+/** Format bytes as a human-readable docker-style memory string, e.g. 512m. */
+function formatMemory(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0';
+  const mb = Math.round(bytes / 1024 / 1024);
+  if (mb >= 1024 && mb % 1024 === 0) return `${mb / 1024}g`;
+  return `${mb}m`;
+}
+
+/** Parse a memory value that may be a byte number or a docker-style string. */
+function parseMemory(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const m = value.trim().match(/^(\d+(?:\.\d+)?)\s*([mg])?$/i);
+    if (m) {
+      const num = parseFloat(m[1]);
+      const unit = (m[2] || 'm').toLowerCase();
+      return unit === 'g' ? Math.round(num * 1024 * 1024 * 1024) : Math.round(num * 1024 * 1024);
+    }
+  }
+  return undefined;
+}
+
+/** GET /api/admin/terminals - list all running terminal containers. */
+router.get('/terminals', async (_req: AuthedRequest, res: Response) => {
+  if (!dockerService.available) {
+    return ok(res, { containers: [], dockerAvailable: false });
+  }
+  try {
+    const containers = await dockerService.listContainers();
+    return ok(res, { containers, dockerAvailable: true });
+  } catch (err: any) {
+    // eslint-disable-next-line no-console
+    console.error('[admin] list terminals failed:', err);
+    return ok(res, { containers: [], dockerAvailable: false });
+  }
+});
+
+/** POST /api/admin/terminals/:id/stop - force stop any user's container. */
+router.post('/terminals/:id/stop', async (req: AuthedRequest, res: Response) => {
+  if (!dockerService.available) {
+    return fail(res, 503, 'Docker is not available', 'DOCKER_UNAVAILABLE');
+  }
+  try {
+    await dockerService.stopContainer(req.params.id);
+    return ok(res, { ok: true });
+  } catch (err: any) {
+    return fail(res, 500, err && err.message ? err.message : 'stop failed', 'STOP_FAILED');
+  }
+});
+
+/** GET /api/admin/terminal-config - read default resource limits. */
+router.get('/terminal-config', (_req: AuthedRequest, res: Response) => {
+  const cfg = dockerService.getTerminalConfig();
+  return ok(res, {
+    cpus: cfg.cpus,
+    memory: formatMemory(cfg.memory),
+    image: cfg.image,
+    timeoutMinutes: cfg.timeoutMinutes,
+    networkDisabled: cfg.networkDisabled,
+  });
+});
+
+/** PUT /api/admin/terminal-config - update default resource limits (in-memory). */
+router.put('/terminal-config', (req: AuthedRequest, res: Response) => {
+  const body = req.body || {};
+  const patch: Partial<ReturnType<typeof dockerService.getTerminalConfig>> = {};
+  if (body.cpus !== undefined) {
+    const cpus = Number(body.cpus);
+    if (!Number.isFinite(cpus) || cpus <= 0) {
+      return fail(res, 400, 'cpus must be a positive number', 'BAD_REQUEST');
+    }
+    patch.cpus = cpus;
+  }
+  if (body.memory !== undefined) {
+    const mem = parseMemory(body.memory);
+    if (mem === undefined) {
+      return fail(res, 400, 'memory must be e.g. 512m or a byte number', 'BAD_REQUEST');
+    }
+    patch.memory = mem;
+  }
+  if (body.image !== undefined) {
+    if (typeof body.image !== 'string' || !body.image.trim()) {
+      return fail(res, 400, 'image must be a non-empty string', 'BAD_REQUEST');
+    }
+    patch.image = body.image.trim();
+  }
+  if (body.timeoutMinutes !== undefined) {
+    const t = Number(body.timeoutMinutes);
+    if (!Number.isFinite(t) || t <= 0) {
+      return fail(res, 400, 'timeoutMinutes must be a positive number', 'BAD_REQUEST');
+    }
+    patch.timeoutMinutes = t;
+  }
+  if (body.networkDisabled !== undefined) {
+    patch.networkDisabled = body.networkDisabled === true || body.networkDisabled === 'true';
+  }
+  const updated = dockerService.updateTerminalConfig(patch);
+  return ok(res, {
+    cpus: updated.cpus,
+    memory: formatMemory(updated.memory),
+    image: updated.image,
+    timeoutMinutes: updated.timeoutMinutes,
+    networkDisabled: updated.networkDisabled,
+  });
 });
 
 export default router;

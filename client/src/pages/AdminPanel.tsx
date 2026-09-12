@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { adminApi, type AdminUserList, type AiConfigPayload } from '../api/admin';
+import { adminTerminalApi, type TerminalContainer } from '../api/terminal';
 import { useAuth } from '../context/AuthContext';
 import { Badge } from '../components/Badge';
 import { Modal } from '../components/Modal';
@@ -10,7 +11,7 @@ import { CountdownTimer } from '../components/CountdownTimer';
 import type { AdminStats, AiConfig, SmtpConfig, TempConversation, TempMessage, User } from '../types';
 import { formatBytes, formatTime, prettyError } from '../utils/format';
 
-type Tab = 'users' | 'stats' | 'smtp' | 'temp' | 'ai';
+type Tab = 'users' | 'stats' | 'smtp' | 'temp' | 'ai' | 'terminal';
 
 const AI_PRESETS: Record<string, { baseUrl: string; model: string; name: string }> = {
   qwen: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo', name: '千问' },
@@ -68,6 +69,9 @@ export function AdminPanel() {
           <button className={tab === 'ai' ? 'active' : ''} onClick={() => setTab('ai')}>
             AI 配置
           </button>
+          <button className={tab === 'terminal' ? 'active' : ''} onClick={() => setTab('terminal')}>
+            终端管理
+          </button>
         </nav>
         <div className="admin-user">
           <UserAvatar name={user.username} size={36} />
@@ -92,6 +96,7 @@ export function AdminPanel() {
         {tab === 'smtp' && <SmtpTab />}
         {tab === 'temp' && <TempTab />}
         {tab === 'ai' && <AiConfigsTab />}
+        {tab === 'terminal' && <TerminalTab />}
       </main>
     </div>
   );
@@ -735,6 +740,120 @@ function AiConfigsTab() {
           </label>
         </div>
       </Modal>
+    </section>
+  );
+}
+
+function TerminalTab() {
+  const [containers, setContainers] = useState<TerminalContainer[]>([]);
+  const [dockerAvailable, setDockerAvailable] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await adminTerminalApi.listTerminals();
+      setContainers(r.containers || []);
+      setDockerAvailable(r.dockerAvailable);
+      setErr('');
+    } catch (e) {
+      setErr(prettyError(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const id = window.setInterval(load, 30000);
+    return () => window.clearInterval(id);
+  }, [load]);
+
+  const forceStop = async (c: TerminalContainer) => {
+    if (!confirm(`确定强制停止容器 ${c.name || c.id.slice(0, 12)}？`)) return;
+    setBusyId(c.id);
+    try {
+      await adminTerminalApi.adminStopTerminal(c.id);
+      await load();
+    } catch (e) {
+      setErr(prettyError(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <section>
+      <div className="admin-toolbar">
+        <h2>终端管理</h2>
+        <div className="admin-toolbar-actions">
+          <Badge variant={dockerAvailable ? 'online' : 'danger'}>
+            {dockerAvailable ? 'Docker 可用' : 'Docker 不可用'}
+          </Badge>
+          <button className="btn btn-ghost" onClick={load}>
+            刷新
+          </button>
+        </div>
+      </div>
+      {err && <div className="inline-msg err">{err}</div>}
+      {!dockerAvailable && (
+        <div className="inline-msg err">Docker 未安装，终端功能不可用</div>
+      )}
+      {dockerAvailable &&
+        (loading ? (
+          <div className="empty-list">
+            <Spinner />
+          </div>
+        ) : containers.length === 0 ? (
+          <div className="empty-list">当前没有运行中的终端容器</div>
+        ) : (
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>容器 ID</th>
+                <th>所属用户</th>
+                <th>容器名</th>
+                <th>状态</th>
+                <th>创建时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {containers.map((c) => (
+                <tr key={c.id}>
+                  <td className="muted">{c.id.slice(0, 12)}</td>
+                  <td className="muted">{c.userId || '-'}</td>
+                  <td>{c.name || '-'}</td>
+                  <td>
+                    {c.status === 'running' ? (
+                      <Badge variant="online">运行中</Badge>
+                    ) : (
+                      <Badge>{c.status || '未知'}</Badge>
+                    )}
+                  </td>
+                  <td>{formatTime(c.createdAt)}</td>
+                  <td>
+                    <button
+                      className="btn btn-danger btn-sm"
+                      onClick={() => forceStop(c)}
+                      disabled={busyId === c.id}
+                    >
+                      {busyId === c.id ? <Spinner size={14} /> : '强制停止'}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ))}
+
+      <div className="terminal-config-summary">
+        <div className="section-title">默认资源配置</div>
+        <div className="muted">
+          CPU 0.5 核 · 内存 512MB · 镜像 alpine:latest · 超时 30 分钟
+        </div>
+      </div>
     </section>
   );
 }

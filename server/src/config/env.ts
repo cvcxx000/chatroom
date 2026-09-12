@@ -23,6 +23,14 @@ export const env = {
   SMTP_PASS: process.env.SMTP_PASS || '',
   SMTP_FROM: process.env.SMTP_FROM || '',
   SMTP_SECURE: (process.env.SMTP_SECURE || 'false') === 'true',
+
+  // Virtual terminal (Docker container) configuration
+  DOCKER_SOCKET_PATH: process.env.DOCKER_SOCKET_PATH || '/var/run/docker.sock',
+  TERMINAL_IMAGE: process.env.TERMINAL_IMAGE || 'alpine:latest',
+  TERMINAL_CPU_QUOTA: parseInt(process.env.TERMINAL_CPU_QUOTA || '50000', 10),
+  TERMINAL_MEMORY: parseInt(process.env.TERMINAL_MEMORY || '536870912', 10),
+  TERMINAL_TIMEOUT_MINUTES: parseInt(process.env.TERMINAL_TIMEOUT_MINUTES || '30', 10),
+  TERMINAL_NETWORK_DISABLED: (process.env.TERMINAL_NETWORK_DISABLED || 'false') === 'true',
 };
 
 export function isDbConfigured(): boolean {

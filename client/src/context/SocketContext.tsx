@@ -23,6 +23,9 @@ interface SocketState {
   sendReadReceipt: (conversationId: string, messageId: string) => void;
   tempJoin: (tempId: string) => boolean;
   sendTempMessage: (tempId: string, content: string) => boolean;
+  terminalAttach: (containerId: string) => boolean;
+  terminalInput: (containerId: string, data: string) => boolean;
+  terminalResize: (containerId: string, cols: number, rows: number) => boolean;
   on: (type: WsServerMessage['type'], handler: Handler) => () => void;
   off: (type: WsServerMessage['type'], handler: Handler) => void;
 }
@@ -194,6 +197,19 @@ export function SocketProvider({ children }: { children: ReactNode }) {
     (tempId: string, content: string) => send({ type: 'temp_message', tempId, content }),
     [send],
   );
+  const terminalAttach = useCallback(
+    (containerId: string) => send({ type: 'terminal', containerId }),
+    [send],
+  );
+  const terminalInput = useCallback(
+    (containerId: string, data: string) => send({ type: 'terminal_input', containerId, data }),
+    [send],
+  );
+  const terminalResize = useCallback(
+    (containerId: string, cols: number, rows: number) =>
+      send({ type: 'terminal_resize', containerId, cols, rows }),
+    [send],
+  );
 
   const on = useCallback((type: WsServerMessage['type'], handler: Handler) => {
     if (!handlersRef.current.has(type)) handlersRef.current.set(type, new Set());
@@ -218,6 +234,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       sendReadReceipt,
       tempJoin,
       sendTempMessage,
+      terminalAttach,
+      terminalInput,
+      terminalResize,
       on,
       off,
     }),
@@ -231,6 +250,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       sendReadReceipt,
       tempJoin,
       sendTempMessage,
+      terminalAttach,
+      terminalInput,
+      terminalResize,
       on,
       off,
     ],

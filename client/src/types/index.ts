@@ -196,6 +196,10 @@ export type WsServerMessage =
   | { type: 'temp_message'; tempId: string; message: TempMessage; expiresAt: string }
   | { type: 'temp_expired'; tempId: string }
   | { type: 'ai_stream'; conversationId: string; messageId: string; delta: string; done?: boolean }
+  | { type: 'terminal_attached'; containerId: string }
+  | { type: 'terminal_output'; containerId: string; data: string }
+  | { type: 'terminal_closed'; containerId: string }
+  | { type: 'terminal_error'; containerId: string; error: string }
   | { type: 'error'; message: string };
 
 export type WsClientMessage =
@@ -204,7 +208,10 @@ export type WsClientMessage =
   | { type: 'typing'; conversationId: string; isTyping: boolean }
   | { type: 'read_receipt'; conversationId: string; messageId: string }
   | { type: 'temp_join'; tempId: string }
-  | { type: 'temp_message'; tempId: string; content: string };
+  | { type: 'temp_message'; tempId: string; content: string }
+  | { type: 'terminal'; containerId: string }
+  | { type: 'terminal_input'; containerId: string; data: string }
+  | { type: 'terminal_resize'; containerId: string; cols: number; rows: number };
 
 // ---------- Shared links ----------
 export interface SharedLink {
