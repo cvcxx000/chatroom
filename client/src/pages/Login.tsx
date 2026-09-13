@@ -12,7 +12,11 @@ export function Login() {
   const location = useLocation();
   const qs = new URLSearchParams(location.search);
 
-  const redirect = qs.get('redirect') || '/';
+  // 安全校验：登录后回跳只允许站内相对路径，防止开放重定向（open redirect）钓鱼。
+  // 必须以单个 "/" 开头，且拒绝 "//evil.com" 协议相对 URL 与绝对 URL。
+  const rawRedirect = qs.get('redirect') || '/';
+  const redirect =
+    rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/';
   const [mode, setMode] = useState<'account' | 'qr'>('account');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');

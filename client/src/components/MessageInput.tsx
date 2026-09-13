@@ -366,6 +366,7 @@ export function MessageInput({
         placeholder={placeholder}
         value={text}
         disabled={disabled || busy}
+        maxLength={5000}
         onChange={(e) => {
           setText(e.target.value);
           if (e.target.value) triggerTyping();

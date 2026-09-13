@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { Message, MessageReaction, MessageReplyRef, TempMessage, User } from '../types';
 import { formatBytes, formatTime } from '../utils/format';
-import { renderMarkdown } from '../utils/markdown';
+import { renderMarkdown, isSafeUrl } from '../utils/markdown';
 import { UserAvatar } from './UserAvatar';
 import { ImagePreview } from './ImagePreview';
 import { FileIcon } from './FileIcon';
@@ -180,11 +180,13 @@ export function MessageBubble(props: Props) {
               ) : null}
             </>
           ) : f.messageType === 'file' && f.fileUrl ? (
+            // 安全校验：仅允许 http/https 或同源相对 URL，阻断 javascript: 等可执行协议
+            isSafeUrl(f.fileUrl) ? (
             <a
               className="file-card"
               href={f.fileUrl}
               target="_blank"
-              rel="noreferrer"
+              rel="noreferrer noopener"
               download={f.fileName || undefined}
               onClick={(e) => e.stopPropagation()}
             >
@@ -197,6 +199,17 @@ export function MessageBubble(props: Props) {
               </div>
               <div className="file-dl">下载</div>
             </a>
+            ) : (
+            <div className="file-card">
+              <FileIcon fileName={f.fileName} size={40} />
+              <div className="file-meta">
+                <div className="file-name" title={f.fileName || ''}>
+                  {f.fileName || '文件'}
+                </div>
+                <div className="file-size">{formatBytes(f.fileSize)}</div>
+              </div>
+            </div>
+            )
           ) : (
             <div className="bubble-text md-body">{renderMarkdown(f.content)}</div>
           )}

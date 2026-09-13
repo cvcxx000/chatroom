@@ -14,6 +14,26 @@ const INLINE_RE =
   /(`[^`\n]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(\[[^\]\n]+\]\([^)\s]+\))/g;
 const URL_RE = /(https?:\/\/[^\s<]+)/g;
 
+/**
+ * 安全 URL 白名单校验（XSS 防护）。
+ * 只允许 http://、https:// 以及同源相对路径（/xxx、./xxx、../xxx）。
+ * 显式阻断 javascript:、vbscript:、data:、file: 等可执行协议，
+ * 以及 // 开头的协议相对 URL（可能指向恶意第三方域）。
+ */
+export function isSafeUrl(url: string): boolean {
+  if (!url) return false;
+  const u = url.trim();
+  if (!u) return false;
+  // 阻断危险协议（忽略大小写与前导空白）
+  if (/^\s*(javascript|vbscript|data|file|blob):/i.test(u)) return false;
+  // 允许 http/https
+  if (/^https?:\/\//i.test(u)) return true;
+  // 允许同源相对路径，但拒绝 //evil.com 这类协议相对 URL
+  if (u.startsWith('/') && !u.startsWith('//')) return true;
+  if (u.startsWith('./') || u.startsWith('../')) return true;
+  return false;
+}
+
 function renderUrls(text: string, keyPrefix: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   let last = 0;
@@ -23,11 +43,16 @@ function renderUrls(text: string, keyPrefix: string): React.ReactNode[] {
   while ((m = URL_RE.exec(text)) !== null) {
     if (m.index > last) out.push(text.slice(last, m.index));
     const url = m[1];
-    out.push(
-      <a key={`${keyPrefix}-u${k++}`} href={url} target="_blank" rel="noreferrer">
-        {url}
-      </a>,
-    );
+    // 安全校验：仅 http/https 的裸 URL 才渲染为可点击链接
+    if (isSafeUrl(url)) {
+      out.push(
+        <a key={`${keyPrefix}-u${k++}`} href={url} target="_blank" rel="noreferrer noopener">
+          {url}
+        </a>,
+      );
+    } else {
+      out.push(url);
+    }
     last = m.index + m[0].length;
   }
   if (last < text.length) out.push(text.slice(last));
@@ -59,11 +84,17 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
     } else if (token.startsWith('[')) {
       const lm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
       if (lm) {
-        out.push(
-          <a key={key} href={lm[2]} target="_blank" rel="noreferrer">
-            {lm[1]}
-          </a>,
-        );
+        // 安全校验：拒绝 javascript:/data: 等危险协议，避免存储型 XSS
+        if (isSafeUrl(lm[2])) {
+          out.push(
+            <a key={key} href={lm[2]} target="_blank" rel="noreferrer noopener">
+              {lm[1]}
+            </a>,
+          );
+        } else {
+          // 不可信链接降级为纯文本显示
+          out.push(lm[1]);
+        }
       } else {
         out.push(token);
       }

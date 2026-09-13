@@ -515,3 +515,29 @@ chatroom/
 **Made with ❤️ for the open-source community**
 
 </div>
+
+---
+
+## 🐳 Docker 部署
+
+本项目提供开箱即用的 Docker 容器化配置，采用多阶段构建，单容器同时运行前端静态资源与后端 API，内置 PGlite（WASM PostgreSQL），**无需额外数据库容器**。
+
+### 一键启动
+
+```bash
+docker compose up -d --build
+```
+
+启动完成后访问 <http://localhost:4000>，默认管理员账号 `admin` / `admin123`（首次登录后请立即修改密码）。
+
+### 常用操作
+
+```bash
+docker compose logs -f       # 查看日志
+docker compose restart       # 重启
+docker compose down          # 停止（保留数据）
+```
+
+生产部署前请务必修改 `JWT_SECRET`（可通过 `.env` 文件或环境变量覆盖）。
+
+> 完整的环境变量说明、数据持久化、升级流程、虚拟终端（Docker-in-Docker）、备份恢复与故障排查，请参阅 [**DEPLOY.md**](./DEPLOY.md)。

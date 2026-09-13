@@ -26,7 +26,8 @@ router.post('/start', async (req: AuthedRequest, res: Response) => {
   } catch (err: any) {
     // eslint-disable-next-line no-console
     console.error('[terminal] start failed:', err);
-    return fail(res, 500, err && err.message ? err.message : 'failed to start terminal', 'START_FAILED');
+    // [SECURITY] Do not leak Docker daemon error details to the client.
+    return fail(res, 500, 'Failed to start terminal.', 'START_FAILED');
   }
 });
 
@@ -74,8 +75,9 @@ router.post('/:id/stop', async (req: AuthedRequest, res: Response) => {
   try {
     await dockerService.stopContainer(containerId);
     return ok(res, { ok: true });
-  } catch (err: any) {
-    return fail(res, 500, err && err.message ? err.message : 'failed to stop container', 'STOP_FAILED');
+  } catch {
+    // [SECURITY] Do not leak Docker daemon error details.
+    return fail(res, 500, 'Failed to stop container.', 'STOP_FAILED');
   }
 });
 
@@ -89,8 +91,9 @@ router.get('/:id/status', async (req: AuthedRequest, res: Response) => {
   try {
     const status = await dockerService.getContainerStatus(containerId);
     return ok(res, status);
-  } catch (err: any) {
-    return fail(res, 500, err && err.message ? err.message : 'failed to query status', 'STATUS_FAILED');
+  } catch {
+    // [SECURITY] Do not leak Docker daemon error details.
+    return fail(res, 500, 'Failed to query container status.', 'STATUS_FAILED');
   }
 });
 

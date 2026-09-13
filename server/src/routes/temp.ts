@@ -38,7 +38,12 @@ router.post('/:tempId/send', async (req: AuthedRequest, res: Response) => {
   }
   const { content } = req.body || {};
   if (!content) return fail(res, 400, 'content required', 'BAD_REQUEST');
-  const result = addTempMessage(req.params.tempId, req.user!.id, String(content));
+  const text = String(content);
+  // [SECURITY] Enforce a reasonable message length to prevent abuse/DoS.
+  if (text.length > 5000) {
+    return fail(res, 400, 'message too long (max 5000 chars)', 'BAD_REQUEST');
+  }
+  const result = addTempMessage(req.params.tempId, req.user!.id, text);
   if (!result) return fail(res, 404, 'temp conversation not found or expired', 'TEMP_EXPIRED');
   return ok(res, result);
 });

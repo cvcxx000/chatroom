@@ -131,6 +131,19 @@ class DockerService {
     this.assertAvailable();
     const docker = this.docker!;
 
+    // [SECURITY] Limit the number of concurrent containers per user to prevent
+    // resource exhaustion (Docker daemon CPU/memory/disk DoS).
+    let userContainerCount = 0;
+    for (const m of this.managed.values()) {
+      if (m.userId === userId) userContainerCount++;
+    }
+    const MAX_CONTAINERS_PER_USER = 3;
+    if (userContainerCount >= MAX_CONTAINERS_PER_USER) {
+      throw new Error(
+        `Maximum ${MAX_CONTAINERS_PER_USER} containers per user. Stop an existing one first.`,
+      );
+    }
+
     const shortId = Math.random().toString(36).slice(2, 10);
     const name = `${NAME_PREFIX}${userId}-${shortId}`;
     const image = this.terminalConfig.image;
@@ -336,7 +349,10 @@ class DockerService {
   private findManaged(ref: string): ManagedContainer | undefined {
     if (this.managed.has(ref)) return this.managed.get(ref);
     for (const m of this.managed.values()) {
-      if (m.containerId === ref || m.containerId.startsWith(ref) || m.name === ref) return m;
+      // [SECURITY] Exact match only: previously used startsWith(), which allowed
+      // a user to pass a short container-ID prefix and resolve to another user's
+      // container (IDOR / cross-user container access).
+      if (m.containerId === ref || m.name === ref) return m;
     }
     return undefined;
   }

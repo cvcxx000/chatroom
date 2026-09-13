@@ -42,6 +42,9 @@ export function initWebsocket(httpServer: HttpServer): WebSocketServer {
       const payload = verifyToken(token);
       // Resolve user to check ban status at connection time.
       findUserById(payload.userId).then((user) => {
+        // [安全] 若连接在此异步等待期间已关闭/出错，不要把已断开的 socket
+        // 加入 hub（避免悬挂在线条目）。消息处理在 client 赋值前也会被丢弃，无未认证消息被处理。
+        if (ws.readyState !== WebSocket.OPEN) return;
         if (!user || user.is_banned) {
           ws.send(JSON.stringify({ type: 'error', error: 'unauthorized' }));
           ws.close();

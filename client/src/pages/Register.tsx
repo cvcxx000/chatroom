@@ -54,15 +54,15 @@ export function Register() {
         <div className="form">
           <label>
             用户名
-            <input value={form.username} onChange={set('username')} required minLength={2} />
+            <input value={form.username} onChange={set('username')} required minLength={2} maxLength={32} />
           </label>
           <label>
             邮箱
-            <input type="email" value={form.email} onChange={set('email')} required />
+            <input type="email" value={form.email} onChange={set('email')} required maxLength={128} />
           </label>
           <label>
             昵称
-            <input value={form.displayName} onChange={set('displayName')} placeholder="可选" />
+            <input value={form.displayName} onChange={set('displayName')} placeholder="可选" maxLength={32} />
           </label>
           <label>
             密码

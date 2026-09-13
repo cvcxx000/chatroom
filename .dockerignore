@@ -1,0 +1,45 @@
+# Dependencies (installed fresh inside the image)
+node_modules
+*/node_modules
+
+# Build outputs (rebuilt inside the image)
+dist
+*/dist
+build
+*.tsbuildinfo
+
+# Local environment / secrets — never bake into the image
+.env
+.env.local
+.env.*.local
+*/.env
+*/.env.local
+
+# Runtime data (mounted as volumes instead)
+.pgdata
+*/.pgdata
+uploads
+*/uploads
+
+# Logs / VCS / editor / OS noise
+*.log
+logs
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# Project files that don't belong in the image
+Dockerfile
+docker-compose.yml
+.dockerignore
+DEPLOY.md
+README.md
+API_SPEC.md
+
+# Test / cache / temp
+coverage
+.nyc_output
+.cache
+.tmp

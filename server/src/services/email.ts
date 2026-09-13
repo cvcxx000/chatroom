@@ -71,6 +71,11 @@ export async function sendMail(to: string, subject: string, html: string): Promi
     console.warn('[email] SMTP not configured; skipping email to', to);
     return;
   }
+  // [SECURITY] Reject recipients / subjects containing CR/LF to prevent email
+  // header injection.
+  if (/[\r\n]/.test(to) || /[\r\n]/.test(subject)) {
+    throw new Error('Invalid email header value');
+  }
   const t = await getTransporter();
   await t.sendMail({ from: cfg.from, to, subject, html });
 }

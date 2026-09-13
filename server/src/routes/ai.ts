@@ -67,12 +67,19 @@ const createMyUserProvider = async (req: AuthedRequest, res: Response) => {
   if (!provider || !name || !baseUrl || !apiKey || !model) {
     return fail(res, 400, 'provider, name, baseUrl, apiKey, model required', 'BAD_REQUEST');
   }
+  // [SECURITY] Enforce length limits on sensitive / free-text fields.
+  if (String(apiKey).length > 512) {
+    return fail(res, 400, 'apiKey too long (max 512 chars)', 'BAD_REQUEST');
+  }
+  if (String(baseUrl).length > 2048) {
+    return fail(res, 400, 'baseUrl too long', 'BAD_REQUEST');
+  }
   const row = await createUserAiConfig(req.user!.id, {
-    provider: String(provider),
-    name: String(name),
+    provider: String(provider).slice(0, 64),
+    name: String(name).slice(0, 128),
     baseUrl: String(baseUrl),
     apiKey: String(apiKey),
-    model: String(model),
+    model: String(model).slice(0, 128),
   });
   return ok(res, toPublic(row));
 };
@@ -82,12 +89,17 @@ const createMyUserProvider = async (req: AuthedRequest, res: Response) => {
  */
 const updateMyUserProvider = async (req: AuthedRequest, res: Response) => {
   const { provider, name, baseUrl, apiKey, model, isActive } = req.body || {};
+  // [SECURITY] Empty apiKey means "leave unchanged" (same semantics as admin route),
+  // and enforce length limit.
+  if (apiKey !== undefined && apiKey !== '' && String(apiKey).length > 512) {
+    return fail(res, 400, 'apiKey too long (max 512 chars)', 'BAD_REQUEST');
+  }
   const row = await updateUserAiConfig(req.params.id, req.user!.id, {
-    provider: provider !== undefined ? String(provider) : undefined,
-    name: name !== undefined ? String(name) : undefined,
-    baseUrl: baseUrl !== undefined ? String(baseUrl) : undefined,
-    apiKey: apiKey !== undefined ? String(apiKey) : undefined,
-    model: model !== undefined ? String(model) : undefined,
+    provider: provider !== undefined ? String(provider).slice(0, 64) : undefined,
+    name: name !== undefined ? String(name).slice(0, 128) : undefined,
+    baseUrl: baseUrl !== undefined ? String(baseUrl).slice(0, 2048) : undefined,
+    apiKey: apiKey !== undefined && apiKey !== '' ? String(apiKey) : undefined,
+    model: model !== undefined ? String(model).slice(0, 128) : undefined,
     isActive: isActive !== undefined ? Boolean(isActive) : undefined,
   });
   if (!row) return fail(res, 404, 'config not found', 'NOT_FOUND');

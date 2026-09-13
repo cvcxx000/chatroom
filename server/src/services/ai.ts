@@ -85,8 +85,10 @@ export async function callAiStream(
   });
 
   if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`AI request failed (${res.status}): ${errText.slice(0, 200)}`);
+    // [SECURITY] Do not forward upstream error body verbatim – it may echo
+    // auth headers or internal provider details. Only surface the status.
+    await res.text().catch(() => '');
+    throw new Error(`AI request failed (${res.status})`);
   }
 
   const reader = res.body?.getReader();
@@ -148,8 +150,10 @@ export async function callAiNonStream(
     }),
   });
   if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`AI request failed (${res.status}): ${errText.slice(0, 200)}`);
+    // [SECURITY] Do not forward upstream error body verbatim – it may echo
+    // auth headers or internal provider details. Only surface the status.
+    await res.text().catch(() => '');
+    throw new Error(`AI request failed (${res.status})`);
   }
   const json = await res.json();
   return json?.choices?.[0]?.message?.content ?? '';

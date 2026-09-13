@@ -50,8 +50,18 @@ router.post('/generate', requireAuth, async (req: AuthedRequest, res: Response) 
   if (!(await isMember(conv.id, req.user!.id))) {
     return fail(res, 403, 'not a member of this conversation', 'FORBIDDEN');
   }
+  // [SECURITY] Only group conversations may be shared; private (1:1) and AI
+  // conversations must not be expandable to new members via share links.
+  if (conv.type !== 'group') {
+    return fail(res, 400, 'only group conversations can be shared', 'BAD_REQUEST');
+  }
 
-  const hours = Number(expiresInHours) > 0 ? Number(expiresInHours) : 24;
+  // [SECURITY] Bound link lifetime to [1 hour, 30 days].
+  const hours = Math.min(24 * 30, Math.max(1, Number(expiresInHours) > 0 ? Number(expiresInHours) : 24));
+  // [SECURITY] Reject over-long passwords.
+  if (password && String(password).length > 128) {
+    return fail(res, 400, 'password too long (max 128 chars)', 'BAD_REQUEST');
+  }
   const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
   const token = crypto.randomBytes(24).toString('hex');
 
@@ -118,6 +128,11 @@ router.post('/:token/join', requireAuth, async (req: AuthedRequest, res: Respons
 
   const conv = await findConversationById(link.conversation_id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+
+  // [SECURITY] Only group conversations may be joined via a share link.
+  if (conv.type !== 'group') {
+    return fail(res, 400, 'this conversation cannot be joined via share link', 'BAD_REQUEST');
+  }
 
   if (!(await isMember(conv.id, req.user!.id))) {
     await addMembers(conv.id, [req.user!.id]);

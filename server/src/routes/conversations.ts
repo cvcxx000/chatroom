@@ -63,10 +63,32 @@ const router = Router();
 const UPLOAD_DIR = path.resolve(process.cwd(), env.UPLOAD_DIR);
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+// 安全：UUID 格式校验，防止非法 ID 直达数据库造成 500/报错信息泄露
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v);
+
+// 输入长度上限（与 DB 列定义及防 DoS 对齐）
+const LIMITS = {
+  groupName: 100, // conversations.name VARCHAR(255)，取更严格业务上限
+  messageContent: 5000, // messages.content TEXT，防超长 DoS
+  announcement: 2000, // group_announcements.content TEXT
+  nickname: 100, // group_nicknames.nickname VARCHAR(100)
+};
+
+// 安全：群文件上传扩展名白名单（不能只信 mimetype），
+// 显式排除 .html/.htm/.svg/.js/.mht 等可被浏览器执行的类型，防止存储型 XSS。
+const ALLOWED_GROUP_EXTS = new Set([
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp',
+  '.pdf', '.txt', '.md', '.csv', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  '.zip', '.rar', '.7z', '.tar', '.gz',
+  '.mp3', '.wav', '.m4a', '.ogg', '.mp4', '.mov', '.avi', '.mkv', '.webm',
+]);
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
+    // 使用随机文件名（仅保留扩展名），杜绝路径穿越/覆盖
+    const ext = path.extname(file.originalname).toLowerCase();
     cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`);
   },
 });
@@ -74,6 +96,12 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: { fileSize: env.MAX_FILE_SIZE_MB * 1024 * 1024 },
+  // 安全修复：新增扩展名白名单校验（原实现完全无 fileFilter，任意类型可上传）
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ALLOWED_GROUP_EXTS.has(ext)) cb(null, true);
+    else cb(new Error('file type not allowed'));
+  },
 });
 
 /**
@@ -213,6 +241,8 @@ router.get('/', async (req: AuthedRequest, res: Response) => {
 router.post('/private', async (req: AuthedRequest, res: Response) => {
   const { userId } = req.body || {};
   if (!userId) return fail(res, 400, 'userId required', 'BAD_REQUEST');
+  // 安全：校验 UUID 格式，避免非法输入直达数据库
+  if (!isUuid(userId)) return fail(res, 400, 'invalid userId', 'BAD_REQUEST');
   const other = await findUserById(userId);
   if (!other) return fail(res, 404, 'user not found', 'NOT_FOUND');
   const existing = await findPrivateConversationBetween(req.user!.id, userId);
@@ -229,10 +259,20 @@ router.post('/private', async (req: AuthedRequest, res: Response) => {
 router.post('/group', async (req: AuthedRequest, res: Response) => {
   const { name, memberIds } = req.body || {};
   if (!name) return fail(res, 400, 'name required', 'BAD_REQUEST');
-  const ids: string[] = Array.isArray(memberIds) ? memberIds : [];
+  const groupName = String(name).trim();
+  // 安全：群名长度限制，防止超长输入/DB 报错
+  if (groupName.length === 0 || groupName.length > LIMITS.groupName) {
+    return fail(res, 400, `group name must be 1-${LIMITS.groupName} chars`, 'BAD_REQUEST');
+  }
+  // 安全：过滤非法/重复成员 ID，仅保留合法 UUID
+  const ids: string[] = Array.from(
+    new Set(
+      (Array.isArray(memberIds) ? memberIds : []).filter((id): id is string => isUuid(id)),
+    ),
+  );
   const conv = await createConversation({
     type: 'group',
-    name: String(name),
+    name: groupName,
     createdBy: req.user!.id,
     memberIds: ids,
   });
@@ -241,6 +281,7 @@ router.post('/group', async (req: AuthedRequest, res: Response) => {
 
 /** GET /api/conversations/:id */
 router.get('/:id', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
@@ -262,18 +303,30 @@ router.get('/:id', async (req: AuthedRequest, res: Response) => {
 
 /** POST /api/conversations/:id/members */
 router.post('/:id/members', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
-  if (!(await isMember(conv.id, req.user!.id))) {
-    return fail(res, 403, 'not a member', 'FORBIDDEN');
+  // 安全（IDOR 修复）：原实现仅校验 isMember，任意成员都能拉人入群。
+  // 群为 group 类型时，加人必须是管理员；私有会话不开放此接口。
+  if (conv.type !== 'group') {
+    return fail(res, 400, 'not a group', 'BAD_REQUEST');
   }
-  const userIds: string[] = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+  const role = await getMemberRole(conv.id, req.user!.id);
+  if (role !== 'admin') {
+    return fail(res, 403, 'only group admin can add members', 'FORBIDDEN');
+  }
+  // 安全：仅接受合法 UUID，去重
+  const rawIds: unknown[] = Array.isArray(req.body?.userIds) ? req.body.userIds : [];
+  const userIds: string[] = Array.from(new Set(rawIds.filter((id): id is string => isUuid(id))));
   await addMembers(conv.id, userIds);
   return ok(res, { ok: true });
 });
 
 /** DELETE /api/conversations/:id/members/:userId */
 router.delete('/:id/members/:userId', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id) || !isUuid(req.params.userId)) {
+    return fail(res, 404, 'conversation not found', 'NOT_FOUND');
+  }
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const role = await getMemberRole(conv.id, req.user!.id);
@@ -287,6 +340,7 @@ router.delete('/:id/members/:userId', async (req: AuthedRequest, res: Response) 
 
 /** PUT /api/conversations/:id (rename group) */
 router.put('/:id', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (conv.type !== 'group') return fail(res, 400, 'not a group', 'BAD_REQUEST');
@@ -294,32 +348,49 @@ router.put('/:id', async (req: AuthedRequest, res: Response) => {
   if (role !== 'admin') return fail(res, 403, 'only group admin can rename', 'FORBIDDEN');
   const { name } = req.body || {};
   if (!name) return fail(res, 400, 'name required', 'BAD_REQUEST');
-  await renameConversation(conv.id, String(name));
+  const newName = String(name).trim();
+  // 安全：群名长度限制
+  if (newName.length === 0 || newName.length > LIMITS.groupName) {
+    return fail(res, 400, `group name must be 1-${LIMITS.groupName} chars`, 'BAD_REQUEST');
+  }
+  await renameConversation(conv.id, newName);
   return ok(res, { ok: true });
 });
 
 /** GET /api/conversations/:id/messages?before=&limit= */
 router.get('/:id/messages', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
     return fail(res, 403, 'not a member', 'FORBIDDEN');
   }
   const before = req.query.before ? String(req.query.before) : null;
-  const limit = Math.min(parseInt(String(req.query.limit || '30'), 10) || 30, 100);
+  // 安全：limit 限定在 1..100 范围，防止 0/负数/超大值
+  const limit = Math.min(Math.max(parseInt(String(req.query.limit || '30'), 10) || 30, 1), 100);
   const messages = await listMessagesBefore(conv.id, before, limit);
   return ok(res, messages);
 });
 
 /** POST /api/conversations/:id/messages */
 router.post('/:id/messages', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
     return fail(res, 403, 'not a member', 'FORBIDDEN');
   }
   const { content, messageType, fileUrl, fileName, fileSize } = req.body || {};
+  // 安全：messageType 白名单校验（原实现直接强转，非法类型会落库/触发 DB CHECK 错误）
+  const allowedTypes = ['text', 'image', 'file'] as const;
   const mt = (messageType || 'text') as 'text' | 'image' | 'file';
+  if (!allowedTypes.includes(mt)) {
+    return fail(res, 400, 'invalid messageType', 'BAD_REQUEST');
+  }
+  // 安全：消息内容长度限制，防止超长输入 DoS
+  if (typeof content === 'string' && content.length > LIMITS.messageContent) {
+    return fail(res, 400, `message content too long (max ${LIMITS.messageContent})`, 'BAD_REQUEST');
+  }
   const msg = await createMessage({
     conversationId: conv.id,
     senderId: req.user!.id,
@@ -352,6 +423,7 @@ router.post('/:id/messages', async (req: AuthedRequest, res: Response) => {
 
 /** GET /api/conversations/:id/files */
 router.get('/:id/files', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
@@ -363,6 +435,7 @@ router.get('/:id/files', async (req: AuthedRequest, res: Response) => {
 
 /** POST /api/conversations/:id/files (multipart upload) */
 router.post('/:id/files', upload.single('file'), async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
@@ -387,6 +460,7 @@ router.post('/:id/files', upload.single('file'), async (req: AuthedRequest, res:
 
 /** GET /api/conversations/:id/search?q= - search messages in conversation. */
 router.get('/:id/search', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
@@ -394,19 +468,27 @@ router.get('/:id/search', async (req: AuthedRequest, res: Response) => {
   }
   const q = String(req.query.q || '').trim();
   if (!q) return ok(res, []);
-  const messages = await searchMessagesInConversation(conv.id, q, 50);
+  // 安全：搜索关键词长度限制，防止超长 ILIKE 扫描 DoS
+  const trimmed = q.slice(0, 100);
+  const messages = await searchMessagesInConversation(conv.id, trimmed, 50);
   return ok(res, messages);
 });
 
 /** POST /api/conversations/:id/pin - pin a message. body: { messageId } */
 router.post('/:id/pin', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
     return fail(res, 403, 'not a member', 'FORBIDDEN');
   }
+  // 安全（IDOR 修复）：置顶影响全体成员，仅群管理员可操作
+  const role = await getMemberRole(conv.id, req.user!.id);
+  if (role !== 'admin') {
+    return fail(res, 403, 'only group admin can pin messages', 'FORBIDDEN');
+  }
   const { messageId } = req.body || {};
-  if (!messageId) return fail(res, 400, 'messageId required', 'BAD_REQUEST');
+  if (!messageId || !isUuid(messageId)) return fail(res, 400, 'messageId required', 'BAD_REQUEST');
   const msg = await getMessageById(String(messageId));
   if (!msg || msg.conversation_id !== conv.id) {
     return fail(res, 404, 'message not found in this conversation', 'NOT_FOUND');
@@ -423,10 +505,18 @@ router.post('/:id/pin', async (req: AuthedRequest, res: Response) => {
 
 /** DELETE /api/conversations/:id/pin/:messageId - unpin a message. */
 router.delete('/:id/pin/:messageId', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id) || !isUuid(req.params.messageId)) {
+    return fail(res, 404, 'not found', 'NOT_FOUND');
+  }
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
     return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  // 安全（IDOR 修复）：取消置顶影响全体成员，仅群管理员可操作
+  const role = await getMemberRole(conv.id, req.user!.id);
+  if (role !== 'admin') {
+    return fail(res, 403, 'only group admin can unpin messages', 'FORBIDDEN');
   }
   await unpinMessage(conv.id, req.params.messageId);
   await broadcastToConversation(conv.id, {
@@ -439,6 +529,7 @@ router.delete('/:id/pin/:messageId', async (req: AuthedRequest, res: Response) =
 
 /** GET /api/conversations/:id/pinned - list pinned messages. */
 router.get('/:id/pinned', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
@@ -459,6 +550,7 @@ router.get('/:id/pinned', async (req: AuthedRequest, res: Response) => {
 
 /** PUT /api/conversations/:id/announcement - set group announcement (admin). */
 router.put('/:id/announcement', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (conv.type !== 'group') return fail(res, 400, 'not a group', 'BAD_REQUEST');
@@ -467,6 +559,10 @@ router.put('/:id/announcement', async (req: AuthedRequest, res: Response) => {
   const { content } = req.body || {};
   if (typeof content !== 'string') {
     return fail(res, 400, 'content required', 'BAD_REQUEST');
+  }
+  // 安全：公告内容长度限制
+  if (content.length > LIMITS.announcement) {
+    return fail(res, 400, `announcement too long (max ${LIMITS.announcement})`, 'BAD_REQUEST');
   }
   const ann = await setAnnouncement(conv.id, content, req.user!.id);
   await broadcastToConversation(conv.id, {
@@ -479,6 +575,7 @@ router.put('/:id/announcement', async (req: AuthedRequest, res: Response) => {
 
 /** GET /api/conversations/:id/announcement - get latest group announcement. */
 router.get('/:id/announcement', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
@@ -490,6 +587,7 @@ router.get('/:id/announcement', async (req: AuthedRequest, res: Response) => {
 
 /** PUT /api/conversations/:id/nickname - set my group nickname. */
 router.put('/:id/nickname', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
@@ -499,12 +597,18 @@ router.put('/:id/nickname', async (req: AuthedRequest, res: Response) => {
   if (typeof nickname !== 'string' || nickname.trim().length === 0) {
     return fail(res, 400, 'nickname required', 'BAD_REQUEST');
   }
-  const row = await setGroupNickname(conv.id, req.user!.id, nickname.trim());
+  // 安全：群昵称长度限制（DB VARCHAR(100)）
+  const trimmed = nickname.trim();
+  if (trimmed.length > LIMITS.nickname) {
+    return fail(res, 400, `nickname too long (max ${LIMITS.nickname})`, 'BAD_REQUEST');
+  }
+  const row = await setGroupNickname(conv.id, req.user!.id, trimmed);
   return ok(res, row);
 });
 
 /** POST /api/conversations/:id/transfer - transfer group ownership. body: { newOwnerId } */
 router.post('/:id/transfer', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (conv.type !== 'group') return fail(res, 400, 'not a group', 'BAD_REQUEST');
@@ -513,7 +617,9 @@ router.post('/:id/transfer', async (req: AuthedRequest, res: Response) => {
     return fail(res, 403, 'only current owner/admin can transfer', 'FORBIDDEN');
   }
   const { newOwnerId } = req.body || {};
-  if (!newOwnerId) return fail(res, 400, 'newOwnerId required', 'BAD_REQUEST');
+  if (!newOwnerId || !isUuid(String(newOwnerId))) {
+    return fail(res, 400, 'newOwnerId required', 'BAD_REQUEST');
+  }
   const newOwner = await findUserById(String(newOwnerId));
   if (!newOwner) return fail(res, 404, 'new owner not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, newOwner.id))) {
@@ -531,6 +637,7 @@ router.post('/:id/transfer', async (req: AuthedRequest, res: Response) => {
 
 /** POST /api/conversations/:id/leave - leave a group. */
 router.post('/:id/leave', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (conv.type !== 'group') return fail(res, 400, 'not a group', 'BAD_REQUEST');
@@ -558,6 +665,7 @@ router.post('/:id/leave', async (req: AuthedRequest, res: Response) => {
 
 /** GET /api/conversations/:id/qrcode - get group invite QR token. */
 router.get('/:id/qrcode', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
@@ -570,10 +678,19 @@ router.get('/:id/qrcode', async (req: AuthedRequest, res: Response) => {
 
 /** POST /api/conversations/:id/clear - clear chat history. */
 router.post('/:id/clear', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
     return fail(res, 403, 'not a member', 'FORBIDDEN');
+  }
+  // 安全（IDOR/数据破坏修复）：清空会话会物理删除全部消息并广播给所有人，
+  // 原实现任意成员即可操作。群会话必须为管理员；私聊不允许"清空"（会影响对方）。
+  if (conv.type === 'group') {
+    const role = await getMemberRole(conv.id, req.user!.id);
+    if (role !== 'admin') {
+      return fail(res, 403, 'only group admin can clear history', 'FORBIDDEN');
+    }
   }
   await clearMessagesInConversation(conv.id);
   await broadcastToConversation(conv.id, {
@@ -585,6 +702,7 @@ router.post('/:id/clear', async (req: AuthedRequest, res: Response) => {
 
 /** DELETE /api/conversations/:id - delete conversation / leave. */
 router.delete('/:id', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
@@ -601,6 +719,7 @@ router.delete('/:id', async (req: AuthedRequest, res: Response) => {
 
 /** POST /api/conversations/:id/read - mark conversation as read. */
 router.post('/:id/read', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {
@@ -611,6 +730,7 @@ router.post('/:id/read', async (req: AuthedRequest, res: Response) => {
 
 /** POST /api/conversations/:id/unread - mark conversation as unread. */
 router.post('/:id/unread', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   const conv = await findConversationById(req.params.id);
   if (!conv) return fail(res, 404, 'conversation not found', 'NOT_FOUND');
   if (!(await isMember(conv.id, req.user!.id))) {

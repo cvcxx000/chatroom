@@ -1,0 +1,40 @@
+services:
+  chatroom:
+    build: .
+    image: chatroom:latest
+    container_name: chatroom
+    restart: always
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      # IMPORTANT: override this with a long random string in production!
+      - JWT_SECRET=${JWT_SECRET:-change-this-to-a-random-secret-key}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+      # Public origin of this deployment (used for CORS). Change if you
+      # expose the app on another host/port/domain.
+      - CLIENT_ORIGIN=${CLIENT_ORIGIN:-http://localhost:4000}
+      # Embedded WASM PostgreSQL (pglite) data directory inside the container
+      - PGLITE_DATA=/app/server/.pgdata
+      # Uploaded files directory inside the container
+      - UPLOAD_DIR=/app/server/uploads
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-50}
+    volumes:
+      # Persist pglite database and uploaded files across container rebuilds
+      - pgdata:/app/server/.pgdata
+      - uploads:/app/server/uploads
+      # Optional: virtual terminal feature needs the host Docker socket.
+      # Uncomment ONLY if you need the in-browser terminal. This grants the
+      # container full root-equivalent control over the host Docker daemon.
+      # - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  pgdata:
+  uploads:

@@ -126,8 +126,9 @@ router.post('/smtp/test', async (req: AuthedRequest, res: Response) => {
   try {
     await sendMail(to, 'ChatRoom SMTP test', 'This is a test email from ChatRoom.');
     return ok(res, { sent: true, to });
-  } catch (err: any) {
-    return fail(res, 500, `send failed: ${err.message}`, 'SMTP_FAILED');
+  } catch {
+    // [SECURITY] Do not leak SMTP server error details (host/user).
+    return fail(res, 500, 'Failed to send test email. Check SMTP config.', 'SMTP_FAILED');
   }
 });
 
@@ -179,12 +180,19 @@ router.post('/ai-configs', async (req: AuthedRequest, res: Response) => {
   if (!provider || !name || !baseUrl || !apiKey || !model) {
     return fail(res, 400, 'provider, name, baseUrl, apiKey and model are required', 'BAD_REQUEST');
   }
+  // [SECURITY] Enforce length limits.
+  if (String(apiKey).length > 512) {
+    return fail(res, 400, 'apiKey too long (max 512 chars)', 'BAD_REQUEST');
+  }
+  if (String(baseUrl).length > 2048) {
+    return fail(res, 400, 'baseUrl too long', 'BAD_REQUEST');
+  }
   const cfg = await createAiConfig({
-    provider: String(provider),
-    name: String(name),
+    provider: String(provider).slice(0, 64),
+    name: String(name).slice(0, 128),
     baseUrl: String(baseUrl),
     apiKey: String(apiKey),
-    model: String(model),
+    model: String(model).slice(0, 128),
     isActive: isActive !== false,
   });
   return ok(res, { id: cfg.id });
@@ -195,13 +203,20 @@ router.put('/ai-configs/:id', async (req: AuthedRequest, res: Response) => {
   const existing = await getAiConfigById(req.params.id);
   if (!existing) return fail(res, 404, 'ai config not found', 'NOT_FOUND');
   const { provider, name, baseUrl, apiKey, model, isActive } = req.body || {};
+  // [SECURITY] Enforce length limits.
+  if (apiKey !== undefined && apiKey !== '' && String(apiKey).length > 512) {
+    return fail(res, 400, 'apiKey too long (max 512 chars)', 'BAD_REQUEST');
+  }
+  if (baseUrl !== undefined && String(baseUrl).length > 2048) {
+    return fail(res, 400, 'baseUrl too long', 'BAD_REQUEST');
+  }
   const updated = await updateAiConfig(req.params.id, {
-    provider: provider !== undefined ? String(provider) : undefined,
-    name: name !== undefined ? String(name) : undefined,
+    provider: provider !== undefined ? String(provider).slice(0, 64) : undefined,
+    name: name !== undefined ? String(name).slice(0, 128) : undefined,
     baseUrl: baseUrl !== undefined ? String(baseUrl) : undefined,
     // Empty apiKey means "leave it unchanged".
     apiKey: apiKey === '' || apiKey === undefined ? undefined : String(apiKey),
-    model: model !== undefined ? String(model) : undefined,
+    model: model !== undefined ? String(model).slice(0, 128) : undefined,
     isActive: isActive !== undefined ? isActive === true || isActive === 'true' : undefined,
   });
   return ok(res, { ok: true, id: updated?.id });
@@ -258,8 +273,9 @@ router.post('/terminals/:id/stop', async (req: AuthedRequest, res: Response) => 
   try {
     await dockerService.stopContainer(req.params.id);
     return ok(res, { ok: true });
-  } catch (err: any) {
-    return fail(res, 500, err && err.message ? err.message : 'stop failed', 'STOP_FAILED');
+  } catch {
+    // [SECURITY] Do not leak Docker daemon error details.
+    return fail(res, 500, 'Failed to stop container.', 'STOP_FAILED');
   }
 });
 
@@ -281,15 +297,17 @@ router.put('/terminal-config', (req: AuthedRequest, res: Response) => {
   const patch: Partial<ReturnType<typeof dockerService.getTerminalConfig>> = {};
   if (body.cpus !== undefined) {
     const cpus = Number(body.cpus);
-    if (!Number.isFinite(cpus) || cpus <= 0) {
-      return fail(res, 400, 'cpus must be a positive number', 'BAD_REQUEST');
+    // [SECURITY] Bound cpus to prevent resource exhaustion (max 8 CPUs).
+    if (!Number.isFinite(cpus) || cpus <= 0 || cpus > 8) {
+      return fail(res, 400, 'cpus must be a positive number not exceeding 8', 'BAD_REQUEST');
     }
     patch.cpus = cpus;
   }
   if (body.memory !== undefined) {
     const mem = parseMemory(body.memory);
-    if (mem === undefined) {
-      return fail(res, 400, 'memory must be e.g. 512m or a byte number', 'BAD_REQUEST');
+    // [SECURITY] Bound memory to 8 GB to prevent container OOM/host DoS.
+    if (mem === undefined || mem > 8 * 1024 * 1024 * 1024) {
+      return fail(res, 400, 'memory must be e.g. 512m and not exceed 8g', 'BAD_REQUEST');
     }
     patch.memory = mem;
   }
@@ -297,12 +315,17 @@ router.put('/terminal-config', (req: AuthedRequest, res: Response) => {
     if (typeof body.image !== 'string' || !body.image.trim()) {
       return fail(res, 400, 'image must be a non-empty string', 'BAD_REQUEST');
     }
+    // [SECURITY] Reject shell/command metacharacters in image name to prevent injection.
+    if (/[;&|`$<>\\]/.test(body.image)) {
+      return fail(res, 400, 'image contains invalid characters', 'BAD_REQUEST');
+    }
     patch.image = body.image.trim();
   }
   if (body.timeoutMinutes !== undefined) {
     const t = Number(body.timeoutMinutes);
-    if (!Number.isFinite(t) || t <= 0) {
-      return fail(res, 400, 'timeoutMinutes must be a positive number', 'BAD_REQUEST');
+    // [SECURITY] Bound timeout to [1, 240] minutes (4 hours).
+    if (!Number.isFinite(t) || t <= 0 || t > 240) {
+      return fail(res, 400, 'timeoutMinutes must be between 1 and 240', 'BAD_REQUEST');
     }
     patch.timeoutMinutes = t;
   }

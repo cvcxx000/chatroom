@@ -36,10 +36,28 @@ import { UPLOAD_DIR } from './conversations';
 
 const router = Router();
 
+// 安全：UUID 格式校验
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.test(v);
+
+// 安全：头像允许的扩展名白名单（不能只信 mimetype）。
+// 显式排除 .svg（可内嵌脚本，存储型 XSS）、.html/.htm 等可执行类型。
+const ALLOWED_AVATAR_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
+
+// 输入长度上限（对齐 DB 列与防 DoS）
+const LIMITS = {
+  displayName: 100, // users.display_name VARCHAR(100)
+  email: 255, // users.email VARCHAR(255)
+  statusText: 255, // user_status.status_text VARCHAR(255)
+  searchQ: 100,
+  reportDetail: 1000,
+  password: 128,
+};
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
+    const ext = path.extname(file.originalname).toLowerCase();
     cb(null, `avatar-${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`);
   },
 });
@@ -47,6 +65,11 @@ const upload = multer({
   storage,
   limits: { fileSize: env.MAX_FILE_SIZE_MB * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
+    // 安全修复：除 mimetype 外同时校验扩展名，拒绝 .svg/.html 等危险类型
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!ALLOWED_AVATAR_EXTS.has(ext)) {
+      return cb(new Error('only images (jpg/jpeg/png/gif/webp) allowed'));
+    }
     if (file.mimetype.startsWith('image/')) cb(null, true);
     else cb(new Error('only images allowed'));
   },
@@ -54,7 +77,7 @@ const upload = multer({
 
 /** GET /api/users/search?q= */
 router.get('/search', async (req: AuthedRequest, res: Response) => {
-  const q = String(req.query.q || '').trim();
+  const q = String(req.query.q || '').trim().slice(0, LIMITS.searchQ);
   if (!q) return ok(res, []);
   const users = await searchUsers(q, 20);
   return ok(res, users.filter((u) => u.id !== req.user!.id).map(toSafeUser));
@@ -100,13 +123,16 @@ router.put('/status', async (req: AuthedRequest, res: Response) => {
   }
   const row = await upsertUserStatus(req.user!.id, {
     status: st,
-    statusText: statusText != null ? String(statusText) : null,
+    // 安全：statusText 长度限制（DB VARCHAR(255)）
+    statusText:
+      statusText != null ? String(statusText).slice(0, LIMITS.statusText) : null,
   });
   return ok(res, row);
 });
 
 /** GET /api/users/:id/profile */
 router.get('/:id/profile', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'user not found', 'NOT_FOUND');
   const user = await findUserById(req.params.id);
   if (!user) return fail(res, 404, 'user not found', 'NOT_FOUND');
   return ok(res, toSafeUser(user));
@@ -114,6 +140,7 @@ router.get('/:id/profile', async (req: AuthedRequest, res: Response) => {
 
 /** GET /api/users/:id/status - get another user's status (with lastSeen). */
 router.get('/:id/status', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.id)) return fail(res, 404, 'user not found', 'NOT_FOUND');
   const user = await findUserById(req.params.id);
   if (!user) return fail(res, 404, 'user not found', 'NOT_FOUND');
   const st = await getUserStatus(user.id);
@@ -128,6 +155,21 @@ router.get('/:id/status', async (req: AuthedRequest, res: Response) => {
 /** PUT /api/users/profile - update profile (displayName, avatarUrl, email, statusText). */
 router.put('/profile', async (req: AuthedRequest, res: Response) => {
   const { displayName, avatarUrl, email, statusText } = req.body || {};
+  // 安全：各字段长度限制，防止超长输入导致 DB 报错/DoS
+  if (displayName !== undefined && displayName !== null) {
+    const dn = String(displayName);
+    if (dn.length > LIMITS.displayName) {
+      return fail(res, 400, `displayName too long (max ${LIMITS.displayName})`, 'BAD_REQUEST');
+    }
+  }
+  if (email !== undefined && email !== null) {
+    if (String(email).length > LIMITS.email) {
+      return fail(res, 400, 'email too long', 'BAD_REQUEST');
+    }
+  }
+  if (avatarUrl !== undefined && avatarUrl !== null && String(avatarUrl).length > 500) {
+    return fail(res, 400, 'avatarUrl too long', 'BAD_REQUEST');
+  }
   const updated = await updateProfile(req.user!.id, {
     displayName: displayName !== undefined ? String(displayName) : undefined,
     avatarUrl: avatarUrl !== undefined ? String(avatarUrl) : undefined,
@@ -136,7 +178,7 @@ router.put('/profile', async (req: AuthedRequest, res: Response) => {
   if (!updated) return fail(res, 404, 'user not found', 'NOT_FOUND');
   if (statusText !== undefined) {
     await upsertUserStatus(req.user!.id, {
-      statusText: statusText ? String(statusText) : null,
+      statusText: statusText ? String(statusText).slice(0, LIMITS.statusText) : null,
     });
   }
   return ok(res, toSafeUser(updated));
@@ -159,6 +201,13 @@ router.put('/password', async (req: AuthedRequest, res: Response) => {
   if (String(newPassword).length < 6) {
     return fail(res, 400, 'new password must be at least 6 chars', 'BAD_REQUEST');
   }
+  // 安全：bcrypt 实际只处理前 72 字节，限制上限避免无意义大输入
+  if (String(newPassword).length > LIMITS.password) {
+    return fail(res, 400, `new password too long (max ${LIMITS.password})`, 'BAD_REQUEST');
+  }
+  if (String(oldPassword).length > LIMITS.password) {
+    return fail(res, 400, 'old password too long', 'BAD_REQUEST');
+  }
   const match = await bcrypt.compare(String(oldPassword), req.user!.password_hash);
   if (!match) return fail(res, 400, 'old password is incorrect', 'INVALID_PASSWORD');
   const hash = await bcrypt.hash(String(newPassword), 10);
@@ -168,6 +217,7 @@ router.put('/password', async (req: AuthedRequest, res: Response) => {
 
 /** POST /api/users/block/:userId - block a user. */
 router.post('/block/:userId', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.userId)) return fail(res, 400, 'invalid userId', 'BAD_REQUEST');
   const target = await findUserById(req.params.userId);
   if (!target) return fail(res, 404, 'user not found', 'NOT_FOUND');
   if (target.id === req.user!.id) {
@@ -179,12 +229,14 @@ router.post('/block/:userId', async (req: AuthedRequest, res: Response) => {
 
 /** DELETE /api/users/block/:userId - unblock a user. */
 router.delete('/block/:userId', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.userId)) return fail(res, 400, 'invalid userId', 'BAD_REQUEST');
   await unblockUser(req.user!.id, req.params.userId);
   return ok(res, { blocked: false, userId: req.params.userId });
 });
 
 /** POST /api/users/:userId/block - block a user (alias used by the frontend). */
 router.post('/:userId/block', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.userId)) return fail(res, 400, 'invalid userId', 'BAD_REQUEST');
   const target = await findUserById(req.params.userId);
   if (!target) return fail(res, 404, 'user not found', 'NOT_FOUND');
   if (target.id === req.user!.id) {
@@ -196,6 +248,7 @@ router.post('/:userId/block', async (req: AuthedRequest, res: Response) => {
 
 /** DELETE /api/users/:userId/block - unblock a user (alias used by the frontend). */
 router.delete('/:userId/block', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.userId)) return fail(res, 400, 'invalid userId', 'BAD_REQUEST');
   await unblockUser(req.user!.id, req.params.userId);
   return ok(res, { blocked: false, userId: req.params.userId });
 });
@@ -205,6 +258,7 @@ router.delete('/:userId/block', async (req: AuthedRequest, res: Response) => {
  * body: { reason: 'harassment'|'advertising'|'abuse'|'other', detail?: string }
  */
 router.post('/:userId/report', async (req: AuthedRequest, res: Response) => {
+  if (!isUuid(req.params.userId)) return fail(res, 404, 'user not found', 'NOT_FOUND');
   const target = await findUserById(req.params.userId);
   if (!target) return fail(res, 404, 'user not found', 'NOT_FOUND');
   if (target.id === req.user!.id) {
@@ -214,11 +268,13 @@ router.post('/:userId/report', async (req: AuthedRequest, res: Response) => {
   if (!reason || !REPORT_REASONS.includes(reason)) {
     return fail(res, 400, `reason must be one of: ${REPORT_REASONS.join(', ')}`, 'BAD_REQUEST');
   }
+  // 安全：举报详情长度限制
+  const detailStr = detail != null ? String(detail).slice(0, LIMITS.reportDetail) : null;
   const row = await createReport(
     req.user!.id,
     target.id,
     reason as ReportReason,
-    detail != null ? String(detail) : null,
+    detailStr,
   );
   return ok(res, row);
 });
