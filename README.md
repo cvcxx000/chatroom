@@ -613,3 +613,51 @@ docker compose down          # 停止（保留数据）
 生产部署前请务必修改 `JWT_SECRET`（可通过 `.env` 文件或环境变量覆盖）。
 
 > 完整的环境变量说明、数据持久化、升级流程、虚拟终端（Docker-in-Docker）、备份恢复与故障排查，请参阅 [**DEPLOY.md**](./DEPLOY.md)。
+
+---
+
+## Android 客户端
+
+ChatRoom 提供原生 Android 客户端（Kotlin + Jetpack Compose），不使用 WebView 套壳。
+
+### 功能特性
+- 欢迎页引导连接服务器
+- 自定义服务器地址和端口
+- 账号密码登录 / 管理员令牌登录
+- 会话列表（私聊 + 群聊）
+- 实时消息收发（WebSocket）
+- 消息历史记录
+
+### 下载
+从 GitHub Release 下载最新 APK：
+- [v1.1.0 APK 下载](https://github.com/cvcxx000/chatroom/releases/tag/v1.1.0)
+
+### 使用说明
+1. 安装并打开 App
+2. 在欢迎页点击「连接服务器」
+3. 输入服务器 IP 地址和端口号（默认 4000），点击「连接」
+4. 选择登录方式：
+   - **账号密码登录**：输入用户名和密码
+   - **令牌登录**（管理员）：粘贴 JWT 令牌直接登录
+5. 登录成功后进入会话列表，点击会话开始聊天
+
+### 从源码构建
+```bash
+cd android
+./gradlew assembleDebug
+# APK 输出路径：app/build/outputs/apk/debug/app-debug.apk
+```
+
+#### 环境要求
+- JDK 17
+- Android SDK (compileSdk 34, minSdk 24)
+- Gradle 8.5（项目自带 Wrapper）
+
+### 技术栈
+- Kotlin + Jetpack Compose (Material 3)
+- OkHttp + Retrofit (REST API)
+- OkHttp WebSocket (实时通信)
+- Gson (JSON 解析)
+- SharedPreferences (本地存储)
+- Navigation Compose (页面导航)
+

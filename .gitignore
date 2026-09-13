@@ -39,3 +39,10 @@ coverage/
 # Cache
 .cache/
 .tmp/
+
+# Android build artifacts
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.apk
