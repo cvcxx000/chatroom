@@ -78,7 +78,7 @@ data class Sender(
 data class Message(
     val id: String,
     @SerializedName("conversation_id") val conversationId: String,
-    @SerializedName("sender_id") val senderId: String,
+    @SerializedName("sender_id") val senderId: String? = null,
     val content: String? = null,
     @SerializedName("message_type") val messageType: String? = null,
     @SerializedName("created_at") val createdAt: String? = null,

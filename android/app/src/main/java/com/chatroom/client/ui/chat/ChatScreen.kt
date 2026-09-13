@@ -2,6 +2,7 @@ package com.chatroom.client.ui.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,10 +10,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -37,11 +41,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.chatroom.client.data.model.Message
 import com.chatroom.client.ui.ChatViewModel
-import java.text.SimpleDateFormat
-import java.util.Locale
+import com.chatroom.client.utils.DateTimeUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,12 +59,20 @@ fun ChatScreen(
     val currentUser by vm.currentUser.collectAsState()
     val conversations by vm.conversations.collectAsState()
     var input by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
 
     LaunchedEffect(conversationId) {
         vm.openConversation(conversationId)
     }
     DisposableEffect(Unit) {
         onDispose { vm.leaveConversation() }
+    }
+
+    // 新消息时自动滚动到底部（reverseLayout=true，index 0 为最新消息在底部）
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(0)
+        }
     }
 
     val conversation = conversations.firstOrNull { it.id == conversationId }
@@ -91,6 +104,7 @@ fun ChatScreen(
                 .padding(padding)
         ) {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
@@ -102,9 +116,10 @@ fun ChatScreen(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(messages, key = { it.id }) { msg ->
+                    val senderId = msg.senderId ?: msg.sender?.id
                     MessageBubble(
                         message = msg,
-                        isMe = msg.senderId == currentUser?.id,
+                        isMe = senderId == currentUser?.id,
                         showSenderName = isGroup
                     )
                 }
@@ -155,11 +170,20 @@ private fun MessageBubble(
         MaterialTheme.colorScheme.onSurface
     }
     val senderName = message.sender?.displayName ?: message.sender?.username
+    val avatarName = message.sender?.displayName ?: message.sender?.username
+    val avatarUserId = message.sender?.id ?: message.senderId
 
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start
+        horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.Bottom
     ) {
+        // 对方消息：头像在左侧
+        if (!isMe) {
+            Avatar(name = avatarName, userId = avatarUserId)
+            Spacer(Modifier.width(8.dp))
+        }
+
         Column(
             modifier = Modifier
                 .widthIn(max = 280.dp)
@@ -182,19 +206,58 @@ private fun MessageBubble(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                formatTime(message.createdAt),
+                DateTimeUtils.formatMessageTime(message.createdAt),
                 style = MaterialTheme.typography.bodySmall,
                 color = textColor.copy(alpha = 0.6f)
             )
         }
+
+        // 自己消息：头像在右侧
+        if (isMe) {
+            Spacer(Modifier.width(8.dp))
+            Avatar(name = avatarName, userId = avatarUserId)
+        }
     }
 }
 
-private fun formatTime(iso: String?): String {
-    if (iso.isNullOrBlank()) return ""
-    return runCatching {
-        val parser = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
-        val date = parser.parse(iso) ?: return@runCatching ""
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(date)
-    }.getOrDefault("")
+/**
+ * 文字头像：圆形背景色根据 userId 哈希，中间显示昵称首字。
+ */
+@Composable
+fun Avatar(name: String?, userId: String?, size: Dp = 36.dp) {
+    val initial = remember(name) {
+        name?.trim()?.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    }
+    val bgColor = remember(userId) { avatarColor(userId) }
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(bgColor),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            initial,
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+private val AVATAR_COLORS = listOf(
+    Color(0xFFE57373),
+    Color(0xFF64B5F6),
+    Color(0xFF81C784),
+    Color(0xFFFFB74D),
+    Color(0xFF9575CD),
+    Color(0xFF4DB6AC),
+    Color(0xFFF06292),
+    Color(0xFF7986CB)
+)
+
+private fun avatarColor(userId: String?): Color {
+    if (userId.isNullOrBlank()) return AVATAR_COLORS[0]
+    val idx = (userId.hashCode() and 0x7FFFFFFF) % AVATAR_COLORS.size
+    return AVATAR_COLORS[idx]
 }

@@ -7,6 +7,8 @@ import com.chatroom.client.data.SessionManager
 import com.chatroom.client.data.WebSocketManager
 import com.chatroom.client.data.model.Conversation
 import com.chatroom.client.data.model.Message
+import com.chatroom.client.data.model.SendMessageRequest
+import com.chatroom.client.data.model.Sender
 import com.chatroom.client.data.model.User
 import com.chatroom.client.data.remote.ApiClient
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +17,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -38,6 +44,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _wsConnected = MutableStateFlow(false)
     val wsConnected: StateFlow<Boolean> = _wsConnected.asStateFlow()
+
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
     private var activeConversationId: String? = null
 
@@ -119,6 +128,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun loadConversations() {
         viewModelScope.launch {
             try {
+                _refreshing.value = true
                 val resp = ApiClient.get(session.baseHttpUrl)
                     .conversations(ApiClient.authHeader(session.token))
                 if (resp.success) {
@@ -128,6 +138,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: Exception) {
                 _error.value = e.message ?: "网络错误"
+            } finally {
+                _refreshing.value = false
             }
         }
     }
@@ -156,18 +168,51 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun sendMessage(conversationId: String, content: String) {
-        if (content.isBlank()) return
+        val text = content.trim()
+        if (text.isBlank()) return
+        val user = _currentUser.value
+        val tempId = "temp-${System.currentTimeMillis()}"
+        val nowIso = currentIsoNow()
+        val tempSender = user?.let {
+            Sender(id = it.id, username = it.username, displayName = it.displayName, avatarUrl = it.avatarUrl)
+        }
+        val tempMsg = Message(
+            id = tempId,
+            conversationId = conversationId,
+            senderId = user?.id,
+            content = text,
+            messageType = "text",
+            createdAt = nowIso,
+            sender = tempSender
+        )
+        // 乐观更新：立即把临时消息加入列表末尾
+        _messages.value = _messages.value + tempMsg
+
         viewModelScope.launch {
             try {
-                ApiClient.get(session.baseHttpUrl).sendMessage(
+                val resp = ApiClient.get(session.baseHttpUrl).sendMessage(
                     conversationId,
                     ApiClient.authHeader(session.token),
-                    com.chatroom.client.data.model.SendMessageRequest(content = content.trim())
+                    SendMessageRequest(content = text)
                 )
+                if (resp.success && resp.data != null) {
+                    val real = resp.data
+                    // 用服务端返回的真实消息替换临时消息
+                    _messages.value = _messages.value.map { if (it.id == tempId) real else it }
+                } else {
+                    _error.value = resp.error ?: "发送失败"
+                }
             } catch (e: Exception) {
                 _error.value = e.message ?: "发送失败"
             }
         }
+    }
+
+    /** 当前时间的 ISO 8601 UTC 字符串 */
+    private fun currentIsoNow(): String {
+        val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+        sdf.timeZone = TimeZone.getTimeZone("UTC")
+        return sdf.format(Date())
     }
 
     // ---------- WebSocket 事件 ----------
@@ -183,7 +228,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                         val msg = env.message
                         if (msg.conversationId == activeConversationId) {
                             val list = _messages.value.toMutableList()
-                            if (list.none { it.id == msg.id }) list.add(msg)
+                            val existingIdx = list.indexOfFirst { it.id == msg.id }
+                            if (existingIdx >= 0) {
+                                // 真实消息已存在，不重复添加
+                            } else {
+                                // 匹配临时消息（content + senderId），用真实消息替换
+                                val tempIdx = list.indexOfFirst {
+                                    it.id.startsWith("temp-") &&
+                                        it.content == msg.content &&
+                                        (it.senderId ?: it.sender?.id) == (msg.senderId ?: msg.sender?.id)
+                                }
+                                if (tempIdx >= 0) {
+                                    list[tempIdx] = msg
+                                } else {
+                                    list.add(msg)
+                                }
+                            }
                             _messages.value = list
                         }
                         // 同时刷新会话列表的最后一条消息
